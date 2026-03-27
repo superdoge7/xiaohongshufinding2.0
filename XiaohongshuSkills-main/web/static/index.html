@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>XiaohongshuSkills 本地控制台</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
+    textarea, input { width: 100%; box-sizing: border-box; }
+    textarea { min-height: 120px; font-family: ui-monospace, monospace; font-size: 12px; }
+    section { margin-bottom: 2rem; }
+    button { padding: 0.4rem 0.8rem; cursor: pointer; }
+    .ok { color: #0a0; }
+    .err { color: #c00; }
+    label { display: block; margin-top: 0.5rem; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <h1>XiaohongshuSkills 本地控制台</h1>
+  <p>需先启动 Chrome CDP（<code>python scripts/chrome_launcher.py</code>）并完成小红书<strong>主页</strong>与<strong>创作者中心</strong>登录。</p>
+
+  <section>
+    <h2>1. 搜索笔记</h2>
+    <label>关键词</label>
+    <input id="kw" type="text" placeholder="例如：春招" />
+    <button type="button" id="btnSearch">检索</button>
+    <pre id="searchOut"></pre>
+  </section>
+
+  <section>
+    <h2>2a. 合并本地打分 JSON</h2>
+    <p>左侧为 <code>search</code> 结果；右侧为 <code>feed_scores</code> 等（见 <code>docs/ai-workflow.md</code>）。对应 <code>POST /api/merge-scores</code>。</p>
+    <label>search JSON</label>
+    <textarea id="mergeSearch"></textarea>
+    <label>scores JSON（本地 / Agent 已生成）</label>
+    <textarea id="mergeScores"></textarea>
+    <button type="button" id="btnMerge">合并</button>
+    <pre id="mergeOut"></pre>
+  </section>
+
+  <section>
+    <h2>2b. 远程打分 API（与 CLI <code>score-api</code> 一致）</h2>
+    <p>使用上方 <strong>search JSON</strong>，按 <code>config/external_ai.json</code> 的 <code>score_api</code> 请求你的服务端。对应 <code>POST /api/score-api</code>。</p>
+    <button type="button" id="btnScoreApi">调用 score-api</button>
+    <pre id="scoreApiOut"></pre>
+  </section>
+
+  <section>
+    <h2>2c. 统一 enrich（推荐 React / Electron 只调这一个）</h2>
+    <p><code>POST /api/enrich-scores</code>：若右侧 scores 为空 → 走远程 score-api；若有内容 → 走本地合并。</p>
+    <button type="button" id="btnEnrich">执行 enrich-scores</button>
+    <pre id="enrichOut"></pre>
+  </section>
+
+  <section>
+    <h2>3. 外部生图（需 config/external_ai.json）</h2>
+    <label>提示词</label>
+    <textarea id="imgPrompt"></textarea>
+    <label>张数 1–4</label>
+    <input id="imgCount" type="number" min="1" max="4" value="3" />
+    <button type="button" id="btnImg">请求生图 API</button>
+    <pre id="imgOut"></pre>
+  </section>
+
+  <section>
+    <h2>4. 写入创作者草稿（预览，不发布）</h2>
+    <label>标题</label>
+    <input id="dTitle" type="text" />
+    <label>正文</label>
+    <textarea id="dContent"></textarea>
+    <label>图片 URL（每行一个，1–4 张）</label>
+    <textarea id="dUrls" placeholder="https://..."></textarea>
+    <button type="button" id="btnDraft">保存到草稿</button>
+    <pre id="draftOut"></pre>
+  </section>
+
+  <script>
+    async function post(path, body) {
+      const r = await fetch(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const text = await r.text();
+      let data;
+      try { data = JSON.parse(text); } catch { data = text; }
+      if (!r.ok) throw new Error(typeof data === 'object' && data.detail ? JSON.stringify(data.detail) : text);
+      return data;
+    }
+
+    document.getElementById('btnSearch').onclick = async () => {
+      const el = document.getElementById('searchOut');
+      el.textContent = '…';
+      try {
+        const data = await post('/api/search', { keyword: document.getElementById('kw').value.trim() });
+        el.textContent = JSON.stringify(data, null, 2);
+        document.getElementById('mergeSearch').value = JSON.stringify(data, null, 2);
+      } catch (e) {
+        el.textContent = 'Error: ' + e.message;
+        el.className = 'err';
+      }
+    };
+
+    document.getElementById('btnMerge').onclick = async () => {
+      const el = document.getElementById('mergeOut');
+      el.textContent = '…';
+      try {
+        const search = JSON.parse(document.getElementById('mergeSearch').value);
+        const scores = JSON.parse(document.getElementById('mergeScores').value);
+        const data = await post('/api/merge-scores', { search, scores });
+        el.textContent = JSON.stringify(data, null, 2);
+        el.className = 'ok';
+        document.getElementById('mergeSearch').value = JSON.stringify(data, null, 2);
+      } catch (e) {
+        el.textContent = 'Error: ' + e.message;
+        el.className = 'err';
+      }
+    };
+
+    document.getElementById('btnScoreApi').onclick = async () => {
+      const el = document.getElementById('scoreApiOut');
+      el.textContent = '…';
+      try {
+        const search = JSON.parse(document.getElementById('mergeSearch').value);
+        const data = await post('/api/score-api', { search });
+        el.textContent = JSON.stringify(data, null, 2);
+        el.className = 'ok';
+        document.getElementById('mergeSearch').value = JSON.stringify(data, null, 2);
+      } catch (e) {
+        el.textContent = 'Error: ' + e.message;
+        el.className = 'err';
+      }
+    };
+
+    document.getElementById('btnEnrich').onclick = async () => {
+      const el = document.getElementById('enrichOut');
+      el.textContent = '…';
+      try {
+        const search = JSON.parse(document.getElementById('mergeSearch').value);
+        const raw = document.getElementById('mergeScores').value.trim();
+        const body = { search };
+        if (raw) body.scores = JSON.parse(raw);
+        const data = await post('/api/enrich-scores', body);
+        el.textContent = JSON.stringify(data, null, 2);
+        el.className = 'ok';
+        document.getElementById('mergeSearch').value = JSON.stringify(data, null, 2);
+      } catch (e) {
+        el.textContent = 'Error: ' + e.message;
+        el.className = 'err';
+      }
+    };
+
+    document.getElementById('btnImg').onclick = async () => {
+      const el = document.getElementById('imgOut');
+      el.textContent = '…';
+      try {
+        const count = Math.min(4, Math.max(1, parseInt(document.getElementById('imgCount').value, 10) || 3));
+        const data = await post('/api/image-api', {
+          prompt: document.getElementById('imgPrompt').value.trim(),
+          count,
+        });
+        el.textContent = JSON.stringify(data, null, 2);
+        el.className = 'ok';
+        if (data.image_urls) {
+          document.getElementById('dUrls').value = data.image_urls.join('\n');
+        }
+      } catch (e) {
+        el.textContent = 'Error: ' + e.message;
+        el.className = 'err';
+      }
+    };
+
+    document.getElementById('btnDraft').onclick = async () => {
+      const el = document.getElementById('draftOut');
+      el.textContent = '…';
+      try {
+        const lines = document.getElementById('dUrls').value.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+        const data = await post('/api/save-draft', {
+          title: document.getElementById('dTitle').value,
+          content: document.getElementById('dContent').value,
+          image_urls: lines,
+          strict_image_downloads: true,
+        });
+        el.textContent = JSON.stringify(data, null, 2);
+        el.className = 'ok';
+      } catch (e) {
+        el.textContent = 'Error: ' + e.message;
+        el.className = 'err';
+      }
+    };
+  </script>
+</body>
+</html>

@@ -1,0 +1,35 @@
+{
+  "_comment": "复制为 config/external_ai.json（勿提交仓库），按需填写 URL 与请求头。${VAR} 会按环境变量展开。",
+  "score_api": {
+    "enabled": false,
+    "url": "https://your-api.example.com/v1/score-xhs-feeds",
+    "method": "POST",
+    "headers": {
+      "Content-Type": "application/json",
+      "Authorization": "Bearer ${XHS_SCORE_API_KEY}"
+    },
+    "timeout_seconds": 120,
+    "request_wrap": {
+      "envelope_key": "payload"
+    }
+  },
+  "image_api": {
+    "enabled": false,
+    "url": "https://your-api.example.com/v1/generate-images",
+    "method": "POST",
+    "headers": {
+      "Content-Type": "application/json",
+      "Authorization": "Bearer ${XHS_IMAGE_API_KEY}"
+    },
+    "timeout_seconds": 300,
+    "body": {
+      "prompt_field": "prompt",
+      "count_field": "n",
+      "extra": {
+        "size": "1024x1024",
+        "quality": "hd"
+      }
+    }
+  },
+  "image_count_default": 3
+}
