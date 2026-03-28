@@ -1,10 +1,11 @@
 # 仓库指南
 
 ## 项目结构与模块组织
-本仓库是一个用于小红书自动化的 Python Skill 包。
-- `scripts/` 包含全部可执行逻辑：`publish_pipeline.py`（主流程）、`cdp_publish.py`（CDP 自动化与账号命令）、`chrome_launcher.py`（Chrome 生命周期管理）、`ai_content_pipeline.py`（可选：检索 JSON + 外部打分/生图 API + 填草稿）、`serve_local_app.py`（可选本地 Web 壳），以及辅助模块（`image_downloader.py`、`account_manager.py`、`run_lock.py`）。
-- `config/accounts.json.example` 是账号与 Profile 的配置模板；`config/external_ai.json.example` 是外部打分/生图 HTTP API 模板（复制为未跟踪的 `config/external_ai.json`）。
-- `docs/` 存放集成说明（例如 `docs/claude-code-integration.md`）。
+本仓库是一个用于小红书自动化的 Python Skill 包，同时支持 Electron + React 桌面应用模式。
+- `scripts/` 包含全部可执行逻辑：`publish_pipeline.py`（主流程）、`cdp_publish.py`（CDP 自动化与账号命令）、`chrome_launcher.py`（Chrome 生命周期管理）、`ai_content_pipeline.py`（可选：检索 JSON + 外部打分/生图 API + 填草稿）、`serve_local_app.py`（FastAPI 后端，桌面应用的 API 层）、`ai_llm_client.py`（AI LLM 统一调用层），以及辅助模块（`image_downloader.py`、`account_manager.py`、`run_lock.py`）。
+- `desktop/` 包含 Electron + React 桌面应用：`electron/`（主进程 + Python sidecar 管理）、`src/`（React 页面与组件）。
+- `config/accounts.json.example` 是账号与 Profile 的配置模板；`config/external_ai.json.example` 是外部打分/生图 HTTP API 模板；`config/ai_presets.json` 是内置 AI 分析 prompt 模板；`config/ai_settings.json.example` 是 AI 服务配置模板（复制为未跟踪的对应文件）。
+- `docs/` 存放集成说明（例如 `docs/claude-code-integration.md`、`docs/openclaw-integration.md`）。
 - `images/publish_temp/` 是临时素材目录占位。
 - 根目录关键文件：`README.md`、`SKILL.md`、`requirements.txt`。
 
@@ -39,3 +40,4 @@
 ## 安全与配置建议
 - 禁止提交真实 Cookie、账号令牌或个人 Chrome Profile 路径。
 - 本地账号配置请基于 `config/accounts.json.example` 复制为未跟踪的 `config/accounts.json` 后再使用。
+- AI 配置请基于 `config/ai_settings.json.example` 复制为 `config/ai_settings.json`，其中包含用户的 API Key，勿提交仓库。

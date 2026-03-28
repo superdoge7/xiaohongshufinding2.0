@@ -1,11 +1,13 @@
 # RedBookSkills
 
-
-
-自动发布内容到小红书（Xiaohongshu/RED）的命令行工具，也支持仅启动测试浏览器（不发布）。
-通过 Chrome DevTools Protocol (CDP) 实现自动化发布，支持多账号管理、无头模式运行、自动搜索素材与内容数据抓取等功能。
+小红书（Xiaohongshu/RED）内容检索、AI 分析与自动化发布工具。
+支持命令行（CLI/Skill）和 **桌面应用（Electron + React）** 两种使用方式。
+通过 Chrome DevTools Protocol (CDP) 实现自动化，支持多账号管理、无头模式运行、AI 内容打分、报告生成等功能。
 
 ## 功能特性
+- **桌面应用（新）**：Electron + React 桌面 GUI，支持搜索、AI 分析、报告生成、账号管理
+- **AI 内容分析（新）**：内置 5 种 prompt 模板（质量评估/爆款预测/违规检测/竞品分析/改写建议），用户填入 API Key 即可使用
+- **内容报告生成（新）**：自动搜索 + AI 分析 → 结构化报告（含笔记链接），支持 Markdown/HTML 导出
 - **自动化发布**：自动填写标题、正文、上传图片
 - **创作者中心兼容修复**：适配 2026 年 2-3 月发布页 DOM 变动（发布按钮、定时开关、日期输入、多图上传等待、正文编辑器）
 - **话题标签自动写入**：识别正文最后一行 `#标签`，然后逐渐写入
@@ -26,13 +28,50 @@
 - **内容数据看板抓取**：支持抓取“笔记基础信息”表（曝光/观看/点赞等）并导出 CSV
 - **AI 编排（可选）**：检索结果导出 JSON → 外部模型打分/生图（用户自配 HTTP API）→ 写入创作者草稿；详见 [docs/ai-workflow.md](docs/ai-workflow.md)
 
-## 安装
+## 桌面应用（Electron + React）
+
+### 快速启动
+
+```bash
+# 1. 安装 Python 依赖
+pip install -r requirements.txt
+pip install -r requirements-app.txt
+
+# 2. 安装前端依赖
+cd desktop
+npm install
+
+# 3. 启动开发模式
+npm run dev
+```
+
+启动后 Electron 会自动拉起 Python FastAPI 后端（`serve_local_app.py`），无需手动启动。
+
+### 功能页面
+
+- **首页**：系统状态总览（后端/Chrome/登录状态）
+- **搜索**：按关键词搜索小红书笔记，支持排序和类型筛选
+- **AI 工作台**：输入自然语言需求，AI 自动搜索 + 分析 + 打分
+- **内容报告**：生成结构化分析报告，支持 Markdown/HTML 导出
+- **账号管理**：多账号管理 + 扫码登录
+- **设置**：配置 AI API Key（OpenAI/Claude/自定义）、Chrome 控制
+
+### AI 配置
+
+1. 复制 `config/ai_settings.json.example` 为 `config/ai_settings.json`
+2. 填入你的 API Key（或在桌面应用「设置」页面配置）
+
+内置 5 种分析模板：内容质量评估、爆款潜力预测、违规风险检测、竞品分析、内容改写建议。
+模板定义在 `config/ai_presets.json`，可自行编辑。
+
+## 安装（CLI 模式）
 
 ### 环境要求
 
 - Python 3.10+
 - Google Chrome 浏览器
 - Windows 操作系统（目前仅测试 Windows）
+- Node.js 18+（桌面应用需要）
 
 ### 安装依赖
 
@@ -388,9 +427,10 @@ python scripts/chrome_launcher.py --kill
 
 ## 支持各种 Skill 工具
 
-本项目可作为 Claude Code、OpenCode 等支持 Skill 的工具使用，只需将项目复制到 `.claude/skills/post-to-xhs/` 目录，并添加 `SKILL.md` 文件即可。
+本项目可作为 **Claude Code**、**OpenCode**、**OpenClaw** 等支持 Skill 的工具使用：根目录已包含 `SKILL.md` 与 `scripts/`，将整个仓库放入对应工具的技能目录（或配置额外技能路径）即可。
 
-详见 [docs/claude-code-integration.md](docs/claude-code-integration.md)
+- Claude Code：见 [docs/claude-code-integration.md](docs/claude-code-integration.md)（示例路径 `.claude/skills/post-to-xhs/`）。
+- **OpenClaw**：见 [docs/openclaw-integration.md](docs/openclaw-integration.md)（加载路径、`openclaw skills list`、ClawHub 说明）。
 
 ## 注意事项
 

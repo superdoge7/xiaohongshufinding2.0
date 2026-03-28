@@ -51,6 +51,8 @@ class SearchBody(BaseModel):
     port: int = 9222
     account: str | None = None
     reuse_existing_tab: bool = False
+    sort_by: str | None = None
+    note_type: str | None = None
 
 
 class MergeScoresBody(BaseModel):
@@ -118,8 +120,8 @@ def api_search(body: SearchBody) -> JSONResponse:
             port=body.port,
             account=body.account,
             reuse_existing_tab=body.reuse_existing_tab,
-            sort_by=None,
-            note_type=None,
+            sort_by=body.sort_by,
+            note_type=body.note_type,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
@@ -250,6 +252,251 @@ def api_save_draft(body: SaveDraftBody) -> JSONResponse:
             detail=f"publish_pipeline exited {proc.returncode}",
         )
     return JSONResponse(content={"ok": True, "message": "Draft filled; review in Chrome"})
+
+
+# ---------------------------------------------------------------------------
+# Chrome lifecycle
+# ---------------------------------------------------------------------------
+
+class ChromeStartBody(BaseModel):
+    headless: bool = False
+    port: int = 9222
+    account: str | None = None
+
+
+@app.post("/api/chrome/start")
+def api_chrome_start(body: ChromeStartBody) -> JSONResponse:
+    from chrome_launcher import ensure_chrome
+    ok = ensure_chrome(port=body.port, headless=body.headless, account=body.account)
+    return JSONResponse(content={"ok": ok})
+
+
+@app.post("/api/chrome/stop")
+def api_chrome_stop() -> JSONResponse:
+    from chrome_launcher import kill_chrome
+    kill_chrome()
+    return JSONResponse(content={"ok": True})
+
+
+@app.post("/api/chrome/status")
+def api_chrome_status() -> JSONResponse:
+    from chrome_launcher import is_port_open
+    running = is_port_open(9222)
+    return JSONResponse(content={"running": running})
+
+
+# ---------------------------------------------------------------------------
+# Login
+# ---------------------------------------------------------------------------
+
+@app.post("/api/login/qrcode")
+def api_login_qrcode() -> JSONResponse:
+    from cdp_publish import XiaohongshuPublisher
+    publisher = XiaohongshuPublisher()
+    try:
+        publisher.connect(reuse_existing_tab=True)
+        result = publisher.get_login_qrcode()
+        return JSONResponse(content=result)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    finally:
+        publisher.disconnect()
+
+
+@app.post("/api/login/check")
+def api_login_check() -> JSONResponse:
+    from cdp_publish import XiaohongshuPublisher
+    publisher = XiaohongshuPublisher()
+    try:
+        publisher.connect(reuse_existing_tab=True)
+        logged_in = publisher.check_login()
+        return JSONResponse(content={"logged_in": logged_in})
+    except Exception as e:
+        return JSONResponse(content={"logged_in": False, "error": str(e)})
+    finally:
+        publisher.disconnect()
+
+
+# ---------------------------------------------------------------------------
+# Account management
+# ---------------------------------------------------------------------------
+
+class AddAccountBody(BaseModel):
+    name: str
+    alias: str | None = None
+
+
+class SetDefaultBody(BaseModel):
+    name: str
+
+
+@app.get("/api/accounts")
+def api_list_accounts() -> JSONResponse:
+    from account_manager import list_accounts
+    accounts = list_accounts()
+    return JSONResponse(content={"accounts": accounts})
+
+
+@app.post("/api/accounts")
+def api_add_account(body: AddAccountBody) -> JSONResponse:
+    from account_manager import add_account
+    ok = add_account(body.name, body.alias)
+    if not ok:
+        raise HTTPException(status_code=400, detail=f"Account '{body.name}' already exists")
+    return JSONResponse(content={"ok": True})
+
+
+@app.delete("/api/accounts/{name}")
+def api_delete_account(name: str) -> JSONResponse:
+    from account_manager import remove_account
+    ok = remove_account(name)
+    if not ok:
+        raise HTTPException(status_code=400, detail=f"Cannot remove account '{name}'")
+    return JSONResponse(content={"ok": True})
+
+
+@app.post("/api/accounts/default")
+def api_set_default_account(body: SetDefaultBody) -> JSONResponse:
+    from account_manager import set_default_account
+    ok = set_default_account(body.name)
+    if not ok:
+        raise HTTPException(status_code=400, detail=f"Account '{body.name}' not found")
+    return JSONResponse(content={"ok": True})
+
+
+# ---------------------------------------------------------------------------
+# Feeds - home / detail
+# ---------------------------------------------------------------------------
+
+class FeedDetailBody(BaseModel):
+    feed_id: str
+    xsec_token: str
+    host: str = "127.0.0.1"
+    port: int = 9222
+
+
+@app.post("/api/feeds/home")
+def api_home_feeds() -> JSONResponse:
+    from cdp_publish import XiaohongshuPublisher
+    publisher = XiaohongshuPublisher()
+    try:
+        publisher.connect(reuse_existing_tab=True)
+        if not publisher.check_home_login():
+            raise HTTPException(status_code=401, detail="Not logged in")
+        feeds = publisher.list_feeds()
+        return JSONResponse(content={"feeds": feeds})
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    finally:
+        publisher.disconnect()
+
+
+@app.post("/api/feeds/detail")
+def api_feed_detail(body: FeedDetailBody) -> JSONResponse:
+    from cdp_publish import XiaohongshuPublisher
+    publisher = XiaohongshuPublisher(host=body.host, port=body.port)
+    try:
+        publisher.connect(reuse_existing_tab=True)
+        if not publisher.check_home_login():
+            raise HTTPException(status_code=401, detail="Not logged in")
+        detail = publisher.get_feed_detail(
+            feed_id=body.feed_id,
+            xsec_token=body.xsec_token,
+        )
+        return JSONResponse(content=detail)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    finally:
+        publisher.disconnect()
+
+
+# ---------------------------------------------------------------------------
+# AI analysis endpoints (powered by ai_llm_client)
+# ---------------------------------------------------------------------------
+
+class AIAnalyzeBody(BaseModel):
+    feeds: list[dict]
+    preset: str = "quality"
+    keyword: str | None = None
+
+
+class AIScoreBatchBody(BaseModel):
+    feeds: list[dict]
+    preset: str = "quality"
+
+
+class AIGenerateReportBody(BaseModel):
+    feeds: list[dict]
+    keyword: str
+    preset: str | None = None
+
+
+class AISettingsSaveBody(BaseModel):
+    provider: str
+    api_key: str
+    model: str
+    base_url: str | None = None
+
+
+@app.post("/api/ai/analyze")
+def api_ai_analyze(body: AIAnalyzeBody) -> JSONResponse:
+    from ai_llm_client import analyze_feeds
+    try:
+        result = analyze_feeds(body.feeds, body.preset, keyword=body.keyword)
+        return JSONResponse(content=result)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.post("/api/ai/score-batch")
+def api_ai_score_batch(body: AIScoreBatchBody) -> JSONResponse:
+    from ai_llm_client import score_feeds_batch
+    try:
+        result = score_feeds_batch(body.feeds, body.preset)
+        return JSONResponse(content={"scored_feeds": result})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.post("/api/ai/generate-report")
+def api_ai_generate_report(body: AIGenerateReportBody) -> JSONResponse:
+    from ai_llm_client import generate_report
+    try:
+        report = generate_report(body.feeds, body.keyword, preset=body.preset)
+        return JSONResponse(content={"report": report})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.get("/api/ai/settings")
+def api_ai_settings_get() -> JSONResponse:
+    from ai_llm_client import load_ai_settings
+    settings = load_ai_settings()
+    return JSONResponse(content={
+        "provider": settings.get("provider", "openai"),
+        "api_key_set": bool(settings.get("api_key")),
+        "model": settings.get("model", "gpt-4o"),
+        "base_url": settings.get("base_url", ""),
+    })
+
+
+@app.post("/api/ai/settings")
+def api_ai_settings_save(body: AISettingsSaveBody) -> JSONResponse:
+    from ai_llm_client import save_ai_settings
+    try:
+        save_ai_settings({
+            "provider": body.provider,
+            "api_key": body.api_key,
+            "model": body.model,
+            "base_url": body.base_url or "",
+        })
+        return JSONResponse(content={"ok": True})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 def main() -> None:

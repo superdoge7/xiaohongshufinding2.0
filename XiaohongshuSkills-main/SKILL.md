@@ -1,11 +1,16 @@
 ---
-name: RedBookSkills
+name: redbook_skills
 description: |
-  将图文/视频内容自动发布到小红书（XHS），并支持登录检查、内容检索与互动操作。
-  适用场景：发布图文、发布视频、仅启动测试浏览器、获取登录二维码、首页推荐抓取、搜索笔记、评论互动、抓取内容数据。
+  将图文/视频内容自动发布到小红书（XHS），并支持登录检查、内容检索与互动操作、AI 内容分析与报告生成。
+  适用场景：发布图文、发布视频、仅启动测试浏览器、获取登录二维码、首页推荐抓取、搜索笔记、评论互动、抓取内容数据、AI 打分分析、生成内容报告。
+  支持桌面应用模式（Electron + React）和 CLI/Skill 模式。
 metadata:
   trigger: 发布内容到小红书
   source: Angiin/Post-to-xhs
+  openclaw:
+    requires:
+      bins:
+        - python
 ---
 
 # Post-to-xhs
