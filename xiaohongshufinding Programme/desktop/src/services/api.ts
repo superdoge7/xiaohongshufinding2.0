@@ -264,4 +264,41 @@ export const api = {
 
   // Health
   health: () => request<{ status: string }>("/api/health"),
+
+  desktop: {
+    config: {
+      get: () =>
+        request<{
+          history_dir: string;
+          effective_history_dir: string;
+          default_history_dir: string;
+          session_file: string;
+        }>("/api/desktop/config"),
+      save: (body: { history_dir: string }) =>
+        request<{
+          ok: boolean;
+          history_dir: string;
+          effective_history_dir: string;
+          session_file: string;
+        }>("/api/desktop/config", {
+          method: "POST",
+          body: JSON.stringify(body),
+        }),
+    },
+    session: {
+      get: () =>
+        request<{
+          snapshot: Record<string, unknown> | null;
+          session_path: string;
+        }>("/api/desktop/session"),
+      save: (body: Record<string, unknown>) =>
+        request<{ ok: boolean; session_path: string }>(
+          "/api/desktop/session",
+          {
+            method: "POST",
+            body: JSON.stringify(body),
+          }
+        ),
+    },
+  },
 };

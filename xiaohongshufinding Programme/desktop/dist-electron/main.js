@@ -222,6 +222,19 @@ electron.app.whenReady().then(async () => {
     contents.setZoomFactor(next);
     return next;
   });
+  electron.ipcMain.handle("select-history-directory", async () => {
+    const win = electron.BrowserWindow.getFocusedWindow() ?? mainWindow;
+    const r = await electron.dialog.showOpenDialog(win ?? void 0, {
+      properties: ["openDirectory", "createDirectory"],
+      title: "选择历史记录保存文件夹"
+    });
+    if (r.canceled || r.filePaths.length === 0) return null;
+    return r.filePaths[0];
+  });
+  electron.ipcMain.handle("shell-open-path", async (_event, targetPath) => {
+    if (!targetPath || typeof targetPath !== "string") return;
+    await electron.shell.openPath(targetPath);
+  });
   createWindow();
   electron.app.on("activate", () => {
     if (electron.BrowserWindow.getAllWindows().length === 0) createWindow();

@@ -45,6 +45,7 @@ content.txt
 # Config with sensitive data
 config/accounts.json
 config/external_ai.json
+config/ai_settings.json
 
 # Images
 images/publish_temp/*

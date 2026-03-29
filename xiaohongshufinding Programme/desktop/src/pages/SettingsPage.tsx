@@ -10,6 +10,8 @@ import {
   Cpu,
   Monitor,
   AlertTriangle,
+  FolderOpen,
+  FolderInput,
 } from "lucide-react";
 
 const PROVIDERS = [
@@ -44,6 +46,14 @@ export function SettingsPage() {
   const [availableBrowsers, setAvailableBrowsers] = useState<BrowserInfo[]>([]);
   const [selectedBrowser, setSelectedBrowser] = useState("auto");
   const [backendOk, setBackendOk] = useState<boolean | null>(null);
+
+  const [histDirInput, setHistDirInput] = useState("");
+  const [histEffective, setHistEffective] = useState("");
+  const [histSessionFile, setHistSessionFile] = useState("");
+  const [histDefault, setHistDefault] = useState("");
+  const [histSaving, setHistSaving] = useState(false);
+  const [histSaved, setHistSaved] = useState(false);
+  const [histErr, setHistErr] = useState("");
 
   useEffect(() => {
     api.health()
@@ -80,6 +90,16 @@ export function SettingsPage() {
     api.chromeBrowsers()
       .then((r) => setAvailableBrowsers(r.browsers || []))
       .catch(() => {});
+
+    api.desktop.config
+      .get()
+      .then((c) => {
+        setHistDirInput(c.history_dir || "");
+        setHistEffective(c.effective_history_dir || "");
+        setHistSessionFile(c.session_file || "");
+        setHistDefault(c.default_history_dir || "");
+      })
+      .catch(() => {});
   }, []);
 
   const handleSave = useCallback(async () => {
@@ -113,6 +133,57 @@ export function SettingsPage() {
 
   const currentProvider = PROVIDERS.find((p) => p.id === provider);
   const modelOptions = currentProvider?.models ?? [];
+
+  const refreshHistoryConfig = useCallback(() => {
+    api.desktop.config
+      .get()
+      .then((c) => {
+        setHistDirInput(c.history_dir || "");
+        setHistEffective(c.effective_history_dir || "");
+        setHistSessionFile(c.session_file || "");
+        setHistDefault(c.default_history_dir || "");
+      })
+      .catch(() => {});
+  }, []);
+
+  const saveHistoryConfig = async () => {
+    setHistSaving(true);
+    setHistErr("");
+    setHistSaved(false);
+    try {
+      await api.desktop.config.save({ history_dir: histDirInput.trim() });
+      refreshHistoryConfig();
+      window.dispatchEvent(new Event("redbook-reload-session"));
+      setHistSaved(true);
+      setTimeout(() => setHistSaved(false), 3000);
+    } catch (e) {
+      setHistErr(e instanceof Error ? e.message : "保存失败");
+    }
+    setHistSaving(false);
+  };
+
+  const browseHistoryFolder = async () => {
+    if (!window.electronAPI?.selectHistoryDirectory) {
+      setHistErr("浏览器模式请手动填写路径；桌面版 Electron 支持选择文件夹。");
+      return;
+    }
+    try {
+      const p = await window.electronAPI.selectHistoryDirectory();
+      if (p) setHistDirInput(p);
+    } catch {
+      setHistErr("选择文件夹失败");
+    }
+  };
+
+  const openHistoryFolder = async () => {
+    const target = histEffective || histDefault;
+    if (!target) return;
+    if (window.electronAPI?.shellOpenPath) {
+      await window.electronAPI.shellOpenPath(target);
+    } else {
+      setHistErr("浏览器模式请自行在资源管理器中打开上述路径。");
+    }
+  };
 
   const handleChromeToggle = async () => {
     setChromeLoading(true);
@@ -167,6 +238,12 @@ export function SettingsPage() {
                     if (r.browser) setActiveBrowser(r.browser);
                   }).catch(() => {});
                   api.chromeBrowsers().then((r) => setAvailableBrowsers(r.browsers || [])).catch(() => {});
+                  api.desktop.config.get().then((c) => {
+                    setHistDirInput(c.history_dir || "");
+                    setHistEffective(c.effective_history_dir || "");
+                    setHistSessionFile(c.session_file || "");
+                    setHistDefault(c.default_history_dir || "");
+                  }).catch(() => {});
                 })
                 .catch(() => setBackendOk(false));
             }}
@@ -255,6 +332,80 @@ export function SettingsPage() {
         {chromeError && (
           <p className="text-xs text-red-500 mt-2">{chromeError}</p>
         )}
+      </section>
+
+      {/* 历史记录目录 */}
+      <section className="mb-8 p-5 bg-white rounded-xl border border-gray-200">
+        <h3 className="font-medium text-gray-800 mb-2 flex items-center gap-2">
+          <FolderOpen size={18} /> 历史记录保存位置
+        </h3>
+        <p className="text-xs text-gray-500 mb-4">
+          搜索页结果、内容报告列表、AI 工作台状态会保存到该目录下的{" "}
+          <code className="text-xs bg-gray-100 px-1 rounded">redbook_session.json</code>
+          。留空则使用项目内默认目录（见下方「当前实际目录」）。
+        </p>
+        <div className="space-y-3">
+          <div>
+            <label className="text-sm text-gray-600 mb-1 block">自定义目录（可选）</label>
+            <div className="flex gap-2 flex-wrap">
+              <input
+                value={histDirInput}
+                onChange={(e) => setHistDirInput(e.target.value)}
+                placeholder={`例如 E:\\VS code\\history 或留空使用默认`}
+                className="flex-1 min-w-[200px] px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-200"
+              />
+              <button
+                type="button"
+                onClick={() => void browseHistoryFolder()}
+                className="px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 flex items-center gap-1"
+              >
+                <FolderInput size={16} /> 浏览
+              </button>
+            </div>
+          </div>
+          <div className="text-xs text-gray-500 space-y-1 bg-gray-50 rounded-lg p-3 font-mono break-all">
+            <p>
+              <span className="text-gray-400">当前实际目录：</span>
+              {histEffective || "—"}
+            </p>
+            <p>
+              <span className="text-gray-400">会话文件：</span>
+              {histSessionFile || "—"}
+            </p>
+            <p>
+              <span className="text-gray-400">内置默认（留空时）：</span>
+              {histDefault || "—"}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void saveHistoryConfig()}
+              disabled={histSaving}
+              className="px-4 py-2 text-sm bg-brand-500 text-white rounded-lg hover:bg-brand-600 disabled:opacity-50 flex items-center gap-1.5"
+            >
+              {histSaving ? (
+                <Loader2 size={16} className="animate-spin" />
+              ) : (
+                <Save size={16} />
+              )}
+              保存目录设置
+            </button>
+            <button
+              type="button"
+              onClick={() => void openHistoryFolder()}
+              className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50"
+            >
+              打开当前目录
+            </button>
+            {histSaved && (
+              <span className="text-sm text-green-600 flex items-center gap-1">
+                <CheckCircle2 size={16} /> 已保存并已尝试载入会话
+              </span>
+            )}
+          </div>
+          {histErr && <p className="text-xs text-red-500">{histErr}</p>}
+        </div>
       </section>
 
       {/* AI Settings */}

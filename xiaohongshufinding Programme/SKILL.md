@@ -3,7 +3,7 @@ name: redbook_skills
 description: |
   将图文/视频内容自动发布到小红书（XHS），并支持登录检查、内容检索与互动操作、AI 内容分析与报告生成。
   适用场景：发布图文、发布视频、仅启动测试浏览器、获取登录二维码、首页推荐抓取、搜索笔记、评论互动、抓取内容数据、AI 打分分析、生成内容报告。
-  支持桌面应用模式（Electron + React）和 CLI/Skill 模式；桌面端通过 `serve_local_app.py` 提供 JSON API（含首页 feed、搜索、笔记详情含可选评论滚动、AI 分析与报告、`config/ai_settings.json` 中屏蔽词过滤）。
+  支持桌面应用模式（Electron + React）和 CLI/Skill 模式；桌面端通过 `serve_local_app.py` 提供 JSON API（含首页 feed、搜索、笔记详情含可选评论滚动、AI 分析与报告、`config/ai_settings.json` 中屏蔽词过滤、可选 `/api/desktop/session` 会话持久化与自定义历史目录）。架构与面试说明见 `docs/technical-interview-guide.md`。
 metadata:
   trigger: 发布内容到小红书
   source: Angiin/Post-to-xhs

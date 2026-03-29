@@ -8,32 +8,23 @@ import {
   type ReactNode,
 } from "react";
 import { api } from "@/services/api";
+import {
+  buildSessionSnapshot,
+  applySessionSnapshot,
+  type SessionSnapshotInput,
+} from "@/store/sessionSnapshot";
+import type {
+  AiWorkbenchStep,
+  ReportData,
+  ReportHistoryItem,
+} from "@/store/types";
 
-export type AiWorkbenchStep = "idle" | "searching" | "analyzing" | "done";
-
-export interface ReportVisuals {
-  primary_image_url?: string;
-  more_image_urls?: string[];
-  caption?: string;
-  image_prompt_hint?: string;
-}
-
-export interface ReportData {
-  title: string;
-  overview: string;
-  top_feeds: Array<Record<string, unknown>>;
-  analysis: string;
-  recommendations: string[];
-  filtered_by_block_words?: number;
-  report_visuals?: ReportVisuals | null;
-}
-
-export interface ReportHistoryItem {
-  keyword: string;
-  report: ReportData;
-  feeds: Array<Record<string, unknown>>;
-  date: string;
-}
+export type {
+  AiWorkbenchStep,
+  ReportData,
+  ReportHistoryItem,
+  ReportVisuals,
+} from "@/store/types";
 
 interface AppState {
   backendOk: boolean | null;
@@ -135,6 +126,107 @@ export function AppProvider({ children }: { children: ReactNode }) {
     maxFeeds: 15,
     withIllustrations: true,
   });
+
+  const persistSliceFromState = useCallback((s: AppState): SessionSnapshotInput => {
+    return {
+      searchKeyword: s.searchKeyword,
+      searchFeeds: s.searchFeeds,
+      searchRecommended: s.searchRecommended,
+      reportHistory: s.reportHistory,
+      report: s.report,
+      reportKeyword: s.reportKeyword,
+      reportFeeds: s.reportFeeds,
+      reportMinCount: s.reportMinCount,
+      reportMaxFeeds: s.reportMaxFeeds,
+      reportWithIllustrations: s.reportWithIllustrations,
+      aiInput: s.aiInput,
+      aiSelectedPreset: s.aiSelectedPreset,
+      aiMinCount: s.aiMinCount,
+      aiAnalyzeMaxFeeds: s.aiAnalyzeMaxFeeds,
+      aiFeeds: s.aiFeeds,
+      aiResults: s.aiResults,
+      aiSummary: s.aiSummary,
+      aiFilteredByBlock: s.aiFilteredByBlock,
+      aiStep: s.aiStep,
+      aiError: s.aiError,
+    };
+  }, []);
+
+  const [sessionHydrated, setSessionHydrated] = useState(false);
+  const lastPersistedJson = useRef("");
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        await api.health();
+        const res = await api.desktop.session.get();
+        if (cancelled) return;
+        if (res.snapshot) {
+          const partial = applySessionSnapshot(res.snapshot);
+          if (partial) {
+            setState((s) => {
+              const next = { ...s, ...partial };
+              lastPersistedJson.current = JSON.stringify(
+                buildSessionSnapshot(persistSliceFromState(next))
+              );
+              return next;
+            });
+          }
+        }
+      } catch {
+        /* 后端未启动时跳过恢复 */
+      }
+      if (!cancelled) {
+        window.setTimeout(() => {
+          if (!cancelled) setSessionHydrated(true);
+        }, 0);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [persistSliceFromState]);
+
+  useEffect(() => {
+    const reload = () => {
+      void (async () => {
+        try {
+          const res = await api.desktop.session.get();
+          if (!res.snapshot) {
+            lastPersistedJson.current = "";
+            return;
+          }
+          const partial = applySessionSnapshot(res.snapshot);
+          if (!partial) return;
+          setState((s) => {
+            const next = { ...s, ...partial };
+            lastPersistedJson.current = JSON.stringify(
+              buildSessionSnapshot(persistSliceFromState(next))
+            );
+            return next;
+          });
+        } catch {
+          /* ignore */
+        }
+      })();
+    };
+    window.addEventListener("redbook-reload-session", reload);
+    return () => window.removeEventListener("redbook-reload-session", reload);
+  }, [persistSliceFromState]);
+
+  useEffect(() => {
+    if (!sessionHydrated) return;
+    const snap = buildSessionSnapshot(persistSliceFromState(state));
+    const serialized = JSON.stringify(snap);
+    if (serialized === lastPersistedJson.current) return;
+    const t = window.setTimeout(() => {
+      void api.desktop.session.save(snap).then(() => {
+        lastPersistedJson.current = serialized;
+      }).catch(() => {});
+    }, 1200);
+    return () => window.clearTimeout(t);
+  }, [state, sessionHydrated, persistSliceFromState]);
 
   useEffect(() => {
     aiParamsRef.current = {

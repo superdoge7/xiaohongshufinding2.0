@@ -18,7 +18,7 @@ import tempfile
 from pathlib import Path
 from urllib.parse import urlparse
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -44,6 +44,74 @@ app.add_middleware(
 
 if STATIC_DIR.is_dir():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+# ---------------------------------------------------------------------------
+# Desktop UI: 历史记录目录与会话快照（搜索 / 报告 / AI 工作台）
+# ---------------------------------------------------------------------------
+
+SESSION_FILE_NAME = "redbook_session.json"
+DESKTOP_UI_SETTINGS_FILE = "desktop_ui_settings.json"
+SESSION_SNAPSHOT_VERSION = 1
+_MAX_SESSION_BYTES = 80 * 1024 * 1024  # 80 MiB 上限，防止误写爆磁盘
+
+
+def _desktop_ui_settings_path() -> Path:
+    d = REPO_ROOT / "tmp"
+    d.mkdir(parents=True, exist_ok=True)
+    return d / DESKTOP_UI_SETTINGS_FILE
+
+
+def _load_history_dir_setting() -> str:
+    p = _desktop_ui_settings_path()
+    if not p.is_file():
+        return ""
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return ""
+    raw = data.get("history_dir")
+    return raw.strip() if isinstance(raw, str) else ""
+
+
+def _save_history_dir_setting(history_dir: str) -> None:
+    p = _desktop_ui_settings_path()
+    payload = {"history_dir": (history_dir or "").strip()}
+    p.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def _default_history_dir() -> Path:
+    d = REPO_ROOT / "tmp" / "redbook_history"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _resolve_history_dir(user_path: str | None) -> Path:
+    """用户配置为空时使用仓库下 tmp/redbook_history；否则使用绝对路径并确保目录存在。"""
+    raw = (user_path or "").strip()
+    if not raw:
+        return _default_history_dir()
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        path = (REPO_ROOT / path).resolve()
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"无法创建或使用历史目录: {path} ({e})",
+        ) from e
+    return path
+
+
+def _effective_history_dir() -> Path:
+    return _resolve_history_dir(_load_history_dir_setting())
+
+
+def _session_file_path() -> Path:
+    return _effective_history_dir() / SESSION_FILE_NAME
 
 
 def _xiaohongshu_navigate_url_allowed(url: str) -> bool:
@@ -695,6 +763,72 @@ def api_ai_settings_save(body: AISettingsSaveBody) -> JSONResponse:
         return JSONResponse(content={"ok": True})
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+class DesktopHistoryConfigBody(BaseModel):
+    """用户自定义历史根目录；空字符串表示使用仓库内默认 tmp/redbook_history。"""
+
+    history_dir: str = ""
+
+
+@app.get("/api/desktop/config")
+def api_desktop_config_get() -> JSONResponse:
+    configured = _load_history_dir_setting()
+    eff = _effective_history_dir()
+    return JSONResponse(
+        content={
+            "history_dir": configured,
+            "effective_history_dir": str(eff),
+            "default_history_dir": str(_default_history_dir()),
+            "session_file": str(eff / SESSION_FILE_NAME),
+        }
+    )
+
+
+@app.post("/api/desktop/config")
+def api_desktop_config_save(body: DesktopHistoryConfigBody) -> JSONResponse:
+    _save_history_dir_setting(body.history_dir)
+    eff = _effective_history_dir()
+    return JSONResponse(
+        content={
+            "ok": True,
+            "history_dir": _load_history_dir_setting(),
+            "effective_history_dir": str(eff),
+            "session_file": str(eff / SESSION_FILE_NAME),
+        }
+    )
+
+
+@app.get("/api/desktop/session")
+def api_desktop_session_get() -> JSONResponse:
+    sp = _session_file_path()
+    if not sp.is_file():
+        return JSONResponse({"snapshot": None, "session_path": str(sp)})
+    try:
+        snap = json.loads(sp.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError) as e:
+        raise HTTPException(status_code=500, detail=f"读取会话失败: {e}") from e
+    if not isinstance(snap, dict):
+        raise HTTPException(status_code=500, detail="会话文件格式无效")
+    return JSONResponse({"snapshot": snap, "session_path": str(sp)})
+
+
+@app.post("/api/desktop/session")
+async def api_desktop_session_save(request: Request) -> JSONResponse:
+    body = await request.body()
+    if len(body) > _MAX_SESSION_BYTES:
+        raise HTTPException(status_code=413, detail="会话数据过大")
+    try:
+        data = json.loads(body.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        raise HTTPException(status_code=400, detail=f"无效 JSON: {e}") from e
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=400, detail="会话必须是 JSON 对象")
+    data.setdefault("version", SESSION_SNAPSHOT_VERSION)
+    sp = _session_file_path()
+    sp.parent.mkdir(parents=True, exist_ok=True)
+    sp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    return JSONResponse({"ok": True, "session_path": str(sp)})
 
 
 def main() -> None:

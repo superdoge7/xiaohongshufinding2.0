@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Menu } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from "electron";
 import path from "path";
 import { PythonManager } from "./python-manager";
 
@@ -119,6 +119,21 @@ app.whenReady().then(async () => {
     const next = Math.min(2, Math.max(0.5, Math.round((cur + d) * 100) / 100));
     contents.setZoomFactor(next);
     return next;
+  });
+
+  ipcMain.handle("select-history-directory", async () => {
+    const win = BrowserWindow.getFocusedWindow() ?? mainWindow;
+    const r = await dialog.showOpenDialog(win ?? undefined, {
+      properties: ["openDirectory", "createDirectory"],
+      title: "选择历史记录保存文件夹",
+    });
+    if (r.canceled || r.filePaths.length === 0) return null;
+    return r.filePaths[0];
+  });
+
+  ipcMain.handle("shell-open-path", async (_event, targetPath: string) => {
+    if (!targetPath || typeof targetPath !== "string") return;
+    await shell.openPath(targetPath);
   });
 
   createWindow();
