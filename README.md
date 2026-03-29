@@ -3,7 +3,7 @@
 RedBook Desktop 是一个桌面应用，帮助你快速搜索小红书笔记、用 AI 分析内容质量、生成结构化报告。
 
 支持 **Google Chrome** 和 **Microsoft Edge** 两种浏览器，通过浏览器远程调试协议（CDP）与小红书交互。
-
+灵感来自大佬-https://github.com/white0dew/XiaohongshuSkills 
 ---
 <img width="1886" height="1012" alt="1" src="https://github.com/user-attachments/assets/d7db9c06-47a7-429e-bd2f-3367de61f27e" />
 <img width="1872" height="1007" alt="2" src="https://github.com/user-attachments/assets/eacdbf78-6c53-4413-b842-c755a6590532" />
