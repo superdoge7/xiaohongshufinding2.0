@@ -1,0 +1,12 @@
+{
+  "provider": "custom",
+  "api_key": "d08e080c-6183-402e-ad2a-20a2946fda8e",
+  "model": "ep-20260329165149-gwcmt",
+  "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+  "max_tokens": 4096,
+  "block_words": [
+    "课程",
+    "资料"
+  ],
+  "use_note_covers": true
+}

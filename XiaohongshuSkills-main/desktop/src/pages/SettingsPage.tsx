@@ -9,6 +9,7 @@ import {
   Globe,
   Cpu,
   Monitor,
+  AlertTriangle,
 } from "lucide-react";
 
 const PROVIDERS = [
@@ -17,52 +18,166 @@ const PROVIDERS = [
   { id: "custom", label: "自定义（OpenAI 兼容）", models: [] },
 ];
 
+interface BrowserInfo {
+  name: string;
+  label: string;
+  path: string;
+}
+
 export function SettingsPage() {
   const [provider, setProvider] = useState("openai");
   const [apiKey, setApiKey] = useState("");
   const [model, setModel] = useState("gpt-4o");
   const [baseUrl, setBaseUrl] = useState("");
+  const [maxTokens, setMaxTokens] = useState(4096);
+  const [maxTokensInput, setMaxTokensInput] = useState("4096");
+  const [useNoteCovers, setUseNoteCovers] = useState(false);
+  const [blockWordsText, setBlockWordsText] = useState("");
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [loading, setLoading] = useState(true);
+
   const [chromeRunning, setChromeRunning] = useState(false);
+  const [chromeLoading, setChromeLoading] = useState(false);
+  const [chromeError, setChromeError] = useState("");
+  const [activeBrowser, setActiveBrowser] = useState<string | null>(null);
+  const [availableBrowsers, setAvailableBrowsers] = useState<BrowserInfo[]>([]);
+  const [selectedBrowser, setSelectedBrowser] = useState("auto");
+  const [backendOk, setBackendOk] = useState<boolean | null>(null);
 
   useEffect(() => {
+    api.health()
+      .then(() => setBackendOk(true))
+      .catch(() => setBackendOk(false));
+
     api.aiSettings
       .get()
-      .then((r) => {
-        setProvider(r.provider || "openai");
-        setModel(r.model || "gpt-4o");
-        setBaseUrl(r.base_url || "");
+      .then((r: Record<string, unknown>) => {
+        setProvider((r.provider as string) || "openai");
+        setModel((r.model as string) || "gpt-4o");
+        setBaseUrl((r.base_url as string) || "");
+        if (r.max_tokens) {
+          const mt = Number(r.max_tokens);
+          setMaxTokens(Number.isFinite(mt) ? mt : 4096);
+          setMaxTokensInput(String(Number.isFinite(mt) ? mt : 4096));
+        }
+        if (typeof (r as { use_note_covers?: boolean }).use_note_covers === "boolean") {
+          setUseNoteCovers((r as { use_note_covers: boolean }).use_note_covers);
+        }
+        const bw = (r as { block_words?: string[] }).block_words;
+        if (Array.isArray(bw)) setBlockWordsText(bw.join("\n"));
       })
       .catch(() => {})
       .finally(() => setLoading(false));
-    api.chromeStatus().then((r) => setChromeRunning(r.running)).catch(() => {});
+
+    api.chromeStatus()
+      .then((r) => {
+        setChromeRunning(r.running);
+        if (r.browser) setActiveBrowser(r.browser);
+      })
+      .catch(() => {});
+
+    api.chromeBrowsers()
+      .then((r) => setAvailableBrowsers(r.browsers || []))
+      .catch(() => {});
   }, []);
 
   const handleSave = useCallback(async () => {
     setSaving(true);
     setSaved(false);
     try {
-      await api.aiSettings.save({ provider, api_key: apiKey, model, base_url: baseUrl || undefined });
+      const block_words = blockWordsText
+        .split(/[\n,，;；]+/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const parsedMt = parseInt(maxTokensInput.replace(/\s/g, ""), 10);
+      const saveMt = Number.isFinite(parsedMt)
+        ? Math.min(32768, Math.max(256, parsedMt))
+        : maxTokens;
+      setMaxTokens(saveMt);
+      setMaxTokensInput(String(saveMt));
+      await api.aiSettings.save({
+        provider,
+        api_key: apiKey,
+        model,
+        base_url: baseUrl || undefined,
+        max_tokens: saveMt,
+        block_words,
+        use_note_covers: useNoteCovers,
+      });
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
     } catch {}
     setSaving(false);
-  }, [provider, apiKey, model, baseUrl]);
+  }, [provider, apiKey, model, baseUrl, maxTokens, maxTokensInput, blockWordsText, useNoteCovers]);
 
   const currentProvider = PROVIDERS.find((p) => p.id === provider);
   const modelOptions = currentProvider?.models ?? [];
 
   const handleChromeToggle = async () => {
-    if (chromeRunning) {
-      await api.chromeStop();
-    } else {
-      await api.chromeStart(false);
+    setChromeLoading(true);
+    setChromeError("");
+    try {
+      if (chromeRunning) {
+        await api.chromeStop();
+      } else {
+        const res = await api.chromeStart(false, selectedBrowser);
+        if (!res.ok) {
+          setChromeError("浏览器启动失败");
+        }
+        if (res.browser) setActiveBrowser(res.browser);
+      }
+      const s = await api.chromeStatus();
+      setChromeRunning(s.running);
+      if (s.browser) setActiveBrowser(s.browser);
+    } catch (e) {
+      setChromeError(e instanceof Error ? e.message : "操作失败");
     }
-    const s = await api.chromeStatus();
-    setChromeRunning(s.running);
+    setChromeLoading(false);
   };
+
+  if (backendOk === false) {
+    return (
+      <div className="p-8 max-w-2xl mx-auto">
+        <div className="mb-6">
+          <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">
+            <Settings className="w-5 h-5 text-brand-500" />
+            设置
+          </h2>
+        </div>
+        <div className="p-6 bg-amber-50 border border-amber-200 rounded-xl text-center">
+          <AlertTriangle className="w-10 h-10 text-amber-500 mx-auto mb-3" />
+          <p className="font-medium text-amber-800 mb-2">后端服务未启动</p>
+          <div className="text-sm text-gray-600 text-left bg-white rounded-lg p-4 mb-4 space-y-2">
+            <p>请在命令行（CMD / PowerShell / Terminal）中执行：</p>
+            <code className="block bg-gray-100 p-2 rounded text-xs font-mono">
+              cd {String.raw`项目根目录`}
+            </code>
+            <code className="block bg-gray-100 p-2 rounded text-xs font-mono">
+              python scripts/serve_local_app.py
+            </code>
+          </div>
+          <button
+            onClick={() => {
+              api.health()
+                .then(() => {
+                  setBackendOk(true);
+                  api.chromeStatus().then((r) => {
+                    setChromeRunning(r.running);
+                    if (r.browser) setActiveBrowser(r.browser);
+                  }).catch(() => {});
+                  api.chromeBrowsers().then((r) => setAvailableBrowsers(r.browsers || [])).catch(() => {});
+                })
+                .catch(() => setBackendOk(false));
+            }}
+            className="px-4 py-2 bg-brand-500 text-white text-sm rounded-lg hover:bg-brand-600"
+          >
+            重新检测
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-8 max-w-2xl mx-auto">
@@ -74,29 +189,72 @@ export function SettingsPage() {
         <p className="text-sm text-gray-500 mt-1">配置 AI 服务与浏览器参数</p>
       </div>
 
-      {/* Chrome control */}
+      {/* Browser control */}
       <section className="mb-8 p-5 bg-white rounded-xl border border-gray-200">
         <h3 className="font-medium text-gray-800 mb-4 flex items-center gap-2">
-          <Monitor size={18} /> Chrome 浏览器
+          <Monitor size={18} /> 浏览器
         </h3>
+
+        {/* Browser selector */}
+        {availableBrowsers.length > 0 && (
+          <div className="mb-4">
+            <label className="text-sm text-gray-600 mb-1.5 block">选择浏览器</label>
+            <div className="flex gap-2 flex-wrap">
+              <button
+                onClick={() => setSelectedBrowser("auto")}
+                className={`px-3 py-1.5 text-sm rounded-lg border transition-colors ${
+                  selectedBrowser === "auto"
+                    ? "bg-brand-50 border-brand-300 text-brand-700"
+                    : "border-gray-200 text-gray-600 hover:bg-gray-50"
+                }`}
+              >
+                自动检测
+              </button>
+              {availableBrowsers.map((b) => (
+                <button
+                  key={b.name}
+                  onClick={() => setSelectedBrowser(b.name)}
+                  className={`px-3 py-1.5 text-sm rounded-lg border transition-colors ${
+                    selectedBrowser === b.name
+                      ? "bg-brand-50 border-brand-300 text-brand-700"
+                      : "border-gray-200 text-gray-600 hover:bg-gray-50"
+                  }`}
+                >
+                  {b.label}
+                </button>
+              ))}
+            </div>
+            {availableBrowsers.length === 0 && (
+              <p className="text-xs text-red-500 mt-1">未检测到可用浏览器</p>
+            )}
+          </div>
+        )}
+
         <div className="flex items-center justify-between">
           <div>
             <p className="text-sm text-gray-600">CDP 调试浏览器</p>
             <p className="text-xs text-gray-400 mt-0.5">
-              {chromeRunning ? "运行中 (localhost:9222)" : "未启动"}
+              {chromeRunning
+                ? `${activeBrowser === "edge" ? "Edge" : "Chrome"} 运行中 (localhost:9222)`
+                : "未启动"}
             </p>
           </div>
           <button
             onClick={handleChromeToggle}
-            className={`px-4 py-2 text-sm rounded-lg font-medium ${
+            disabled={chromeLoading}
+            className={`px-4 py-2 text-sm rounded-lg font-medium flex items-center gap-1.5 ${
               chromeRunning
                 ? "border border-gray-300 text-gray-600 hover:bg-gray-50"
                 : "bg-brand-500 text-white hover:bg-brand-600"
-            }`}
+            } disabled:opacity-50`}
           >
+            {chromeLoading && <Loader2 size={14} className="animate-spin" />}
             {chromeRunning ? "停止" : "启动"}
           </button>
         </div>
+        {chromeError && (
+          <p className="text-xs text-red-500 mt-2">{chromeError}</p>
+        )}
       </section>
 
       {/* AI Settings */}
@@ -113,7 +271,7 @@ export function SettingsPage() {
               <label className="text-sm text-gray-600 mb-1.5 block flex items-center gap-1">
                 <Globe size={14} /> API 提供商
               </label>
-              <div className="flex gap-2">
+              <div className="flex gap-2 flex-wrap">
                 {PROVIDERS.map((p) => (
                   <button
                     key={p.id}
@@ -155,6 +313,7 @@ export function SettingsPage() {
                 <select
                   value={model}
                   onChange={(e) => setModel(e.target.value)}
+                  aria-label="选择 AI 模型"
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-200"
                 >
                   {modelOptions.map((m) => (
@@ -171,17 +330,86 @@ export function SettingsPage() {
               )}
             </div>
 
-            {provider === "custom" && (
-              <div>
-                <label className="text-sm text-gray-600 mb-1.5 block">Base URL</label>
-                <input
-                  value={baseUrl}
-                  onChange={(e) => setBaseUrl(e.target.value)}
-                  placeholder="https://your-api.example.com/v1"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-200"
-                />
-              </div>
-            )}
+            <div>
+              <label className="text-sm text-gray-600 mb-1.5 block">Base URL（自定义 API 地址）</label>
+              <input
+                value={baseUrl}
+                onChange={(e) => setBaseUrl(e.target.value)}
+                placeholder={provider === "custom" ? "https://your-api.example.com/v1" : "留空使用默认地址，或填入自定义地址"}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-200"
+              />
+              <p className="text-xs text-gray-400 mt-1">如使用火山引擎：https://ark.cn-beijing.volces.com/api/v3</p>
+            </div>
+
+            <div>
+              <label
+                htmlFor="ai-max-tokens"
+                className="text-sm text-gray-600 mb-1.5 block"
+              >
+                Max Tokens（最大输出长度）
+              </label>
+              <input
+                id="ai-max-tokens"
+                type="text"
+                inputMode="numeric"
+                autoComplete="off"
+                value={maxTokensInput}
+                onChange={(e) => setMaxTokensInput(e.target.value)}
+                onBlur={() => {
+                  const n = parseInt(maxTokensInput.replace(/\s/g, ""), 10);
+                  const clamped = Number.isFinite(n)
+                    ? Math.min(32768, Math.max(256, n))
+                    : maxTokens;
+                  setMaxTokens(clamped);
+                  setMaxTokensInput(String(clamped));
+                }}
+                placeholder="例如 4096 或 8192"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-200 font-mono"
+              />
+              <p className="text-xs text-gray-400 mt-1">
+                控制模型<strong>单次输出</strong>长度；更长、更结构化的 JSON 报告可适当调高（如 8192）。
+                输入数字后失焦会自动限制在 256–32768。
+              </p>
+            </div>
+
+            <div className="flex items-start gap-3 rounded-lg border border-gray-100 bg-gray-50 p-3">
+              <input
+                id="ai-use-covers"
+                type="checkbox"
+                checked={useNoteCovers}
+                onChange={(e) => setUseNoteCovers(e.target.checked)}
+                className="mt-1"
+              />
+              <label htmlFor="ai-use-covers" className="text-sm text-gray-700 cursor-pointer">
+                <span className="font-medium">将笔记封面图送入多模态模型</span>
+                <p className="text-xs text-gray-500 mt-1">
+                  开启后，对 OpenAI 兼容接口（含火山方舟视觉模型）会附带若干张封面
+                  URL；模型需支持 <code className="text-xs">image_url</code>。
+                  直连 Anthropic Claude 时仅把图片链接写在文本中（不送像素）。
+                  外链图若需防盗链，模型侧可能无法拉取。
+                </p>
+              </label>
+            </div>
+
+            <div>
+              <label
+                htmlFor="ai-block-words"
+                className="text-sm text-gray-600 mb-1.5 block"
+              >
+                内容屏蔽词（AI 分析 / 报告前自动过滤）
+              </label>
+              <textarea
+                id="ai-block-words"
+                value={blockWordsText}
+                onChange={(e) => setBlockWordsText(e.target.value)}
+                placeholder="每行一个词，或用逗号分隔。标题/描述/作者名中包含任一屏蔽词的笔记不会送入 AI。"
+                rows={5}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-200 font-mono"
+              />
+              <p className="text-xs text-gray-400 mt-1">
+                匹配不区分大小写。仅影响「AI 工作台」与「内容报告」；搜索页仍会显示全部结果。
+              </p>
+            </div>
 
             <div className="flex items-center gap-3 pt-2">
               <button

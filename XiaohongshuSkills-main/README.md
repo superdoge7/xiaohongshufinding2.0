@@ -1,470 +1,390 @@
-# RedBookSkills
+# RedBook Desktop — 小红书内容检索、AI 分析与报告生成工具
 
-小红书（Xiaohongshu/RED）内容检索、AI 分析与自动化发布工具。
-支持命令行（CLI/Skill）和 **桌面应用（Electron + React）** 两种使用方式。
-通过 Chrome DevTools Protocol (CDP) 实现自动化，支持多账号管理、无头模式运行、AI 内容打分、报告生成等功能。
+RedBook Desktop 是一个桌面应用，帮助你快速搜索小红书笔记、用 AI 分析内容质量、生成结构化报告。
 
-## 功能特性
-- **桌面应用（新）**：Electron + React 桌面 GUI，支持搜索、AI 分析、报告生成、账号管理
-- **AI 内容分析（新）**：内置 5 种 prompt 模板（质量评估/爆款预测/违规检测/竞品分析/改写建议），用户填入 API Key 即可使用
-- **内容报告生成（新）**：自动搜索 + AI 分析 → 结构化报告（含笔记链接），支持 Markdown/HTML 导出
-- **自动化发布**：自动填写标题、正文、上传图片
-- **创作者中心兼容修复**：适配 2026 年 2-3 月发布页 DOM 变动（发布按钮、定时开关、日期输入、多图上传等待、正文编辑器）
-- **话题标签自动写入**：识别正文最后一行 `#标签`，然后逐渐写入
-- **多账号支持**：支持管理多个小红书账号，各账号 Cookie 隔离
-- **无头模式**：支持后台运行，无需显示浏览器窗口
-- **远程 CDP 支持**：可通过 `--host` / `--port` 连接远程 Chrome 调试端口
-- **图片下载**：支持从 URL 自动下载图片，自动添加 Referer 绕过防盗链
-- **登录检测**：自动检测登录状态，未登录时自动切换到有窗口模式扫码
-- **登录二维码导出**：支持返回登录二维码 Base64 图片，便于远程前端展示扫码
-- **登录状态缓存**：`check_login/check_home_login` 默认本地缓存 12 小时，减少重复跳转校验
-- **首页推荐流抓取**：支持抓取首页推荐 feed 列表
-- **内容检索与详情读取**：支持搜索笔记并获取指定笔记详情（含评论数据），详情可选滚动加载更多评论/回复
-- **笔记评论**：支持按 `feed_id + xsec_token` 对指定笔记发表一级评论
-- **评论回复**：支持按评论定位条件（评论 ID / 作者 / 文本片段）回复指定评论
-- **互动动作控制**：支持对指定笔记执行点赞/取消点赞、收藏/取消收藏
-- **用户页信息提取**：支持抓取用户主页快照与主页笔记列表
-- **通知评论抓取**：支持在 `/notification` 页面抓取 `you/mentions` 接口返回
-- **内容数据看板抓取**：支持抓取“笔记基础信息”表（曝光/观看/点赞等）并导出 CSV
-- **AI 编排（可选）**：检索结果导出 JSON → 外部模型打分/生图（用户自配 HTTP API）→ 写入创作者草稿；详见 [docs/ai-workflow.md](docs/ai-workflow.md)
+支持 **Google Chrome** 和 **Microsoft Edge** 两种浏览器，通过浏览器远程调试协议（CDP）与小红书交互。
 
-## 桌面应用（Electron + React）
+---
 
-### 快速启动
+## 目录
 
-```bash
-# 1. 安装 Python 依赖
+- [功能一览](#功能一览)
+- [运行环境要求](#运行环境要求)
+- [安装步骤（零基础指南）](#安装步骤零基础指南)
+  - [第一步：安装 Python](#第一步安装-python)
+  - [第二步：安装 Node.js](#第二步安装-nodejs)
+  - [第三步：下载本项目](#第三步下载本项目)
+  - [第四步：安装 Python 依赖](#第四步安装-python-依赖)
+  - [第五步：安装前端依赖](#第五步安装前端依赖)
+- [启动应用](#启动应用)
+  - [方式一：完整启动（推荐）](#方式一完整启动推荐)
+  - [方式二：仅启动后端（浏览器访问）](#方式二仅启动后端浏览器访问)
+- [使用教程](#使用教程)
+  - [1. 启动浏览器](#1-启动浏览器)
+  - [2. 登录小红书](#2-登录小红书)
+  - [3. 搜索笔记](#3-搜索笔记)
+  - [4. AI 分析](#4-ai-分析)
+  - [5. 生成报告](#5-生成报告)
+  - [6. 设置页面](#6-设置页面)
+- [常见问题（FAQ）](#常见问题faq)
+- [项目结构](#项目结构)
+- [CLI 模式（高级用户）](#cli-模式高级用户)
+- [安全说明](#安全说明)
+
+---
+
+## 功能一览
+
+| 功能 | 说明 |
+|------|------|
+| 扫码登录 | 使用小红书 App 扫描二维码完成登录 |
+| 手机号登录 | 输入手机号，接收短信验证码登录 |
+| 关键词搜索 | 按关键词搜索，可选排序/类型；**目标条数**可一键选择或自定义（5–200） |
+| 首页推荐流 | 在「搜索」页切换「首页推荐流」，抓取登录账号的首页 feed 列表 |
+| 笔记详情 | 卡片摘要 + 可选「加载详情 JSON / 详情+评论」（CDP 滚动加载一级评论） |
+| AI 内容分析 | 对搜索结果评估、打分；支持**屏蔽词**（设置中配置，过滤后再送 AI） |
+| 报告生成 | 结构化报告，支持 Markdown / HTML / JSON 下载；检索条数与屏蔽词同上 |
+| 界面滚动 | 主内容区可上下滚动，设置等长页面不再被裁切 |
+| 多账号管理 | 支持多个小红书账号切换 |
+| Chrome/Edge 支持 | 自动检测并支持两种浏览器 |
+
+---
+
+## 运行环境要求
+
+| 软件 | 最低版本 | 用途 |
+|------|----------|------|
+| **Python** | 3.10+ | 运行后端服务 |
+| **Node.js** | 18+ | 运行桌面前端 |
+| **Google Chrome** 或 **Microsoft Edge** | 最新版 | 浏览器自动化 |
+
+> 如果你的电脑是 Windows 10/11，通常已自带 Edge 浏览器，无需额外安装。
+
+---
+
+## 安装步骤（零基础指南）
+
+### 第一步：安装 Python
+
+1. 打开浏览器，访问 [Python 官网下载页](https://www.python.org/downloads/)
+2. 点击黄色的 **Download Python 3.x.x** 按钮
+3. 运行下载的安装程序
+4. **重要**：安装界面底部勾选 **"Add Python to PATH"**（添加到环境变量），然后点击 **Install Now**
+5. 安装完成后，打开 **CMD**（按 `Win + R`，输入 `cmd`，回车），输入以下命令验证：
+
+```
+python --version
+```
+
+如果显示类似 `Python 3.12.x` 的版本号，说明安装成功。
+
+### 第二步：安装 Node.js
+
+1. 打开浏览器，访问 [Node.js 官网](https://nodejs.org/)
+2. 下载 **LTS**（长期支持版），运行安装程序，一路点 **Next** 即可
+3. 安装完成后，在 CMD 中验证：
+
+```
+node --version
+npm --version
+```
+
+如果都显示版本号，说明安装成功。
+
+### 第三步：下载本项目
+
+**方法 A（推荐）**：如果你安装了 Git：
+
+```
+git clone https://github.com/你的用户名/XiaohongshuSkills.git
+cd XiaohongshuSkills-main
+```
+
+**方法 B**：直接下载 ZIP 文件，解压到你喜欢的位置（如 `D:\RedBookDesktop`）。
+
+### 第四步：安装 Python 依赖
+
+打开 CMD，进入项目目录，执行：
+
+```
+cd 你的项目路径
 pip install -r requirements.txt
 pip install -r requirements-app.txt
+```
 
-# 2. 安装前端依赖
+例如：
+
+```
+cd D:\RedBookDesktop\XiaohongshuSkills-main
+pip install -r requirements.txt
+pip install -r requirements-app.txt
+```
+
+### 第五步：安装前端依赖
+
+继续在 CMD 中执行：
+
+```
 cd desktop
 npm install
-
-# 3. 启动开发模式
-npm run dev
 ```
 
-启动后 Electron 会自动拉起 Python FastAPI 后端（`serve_local_app.py`），无需手动启动。
+等待安装完成（可能需要几分钟）。
 
-### 功能页面
+---
 
-- **首页**：系统状态总览（后端/Chrome/登录状态）
-- **搜索**：按关键词搜索小红书笔记，支持排序和类型筛选
-- **AI 工作台**：输入自然语言需求，AI 自动搜索 + 分析 + 打分
-- **内容报告**：生成结构化分析报告，支持 Markdown/HTML 导出
-- **账号管理**：多账号管理 + 扫码登录
-- **设置**：配置 AI API Key（OpenAI/Claude/自定义）、Chrome 控制
+## 启动应用
 
-### AI 配置
+### 方式一：完整启动（推荐）
 
-1. 复制 `config/ai_settings.json.example` 为 `config/ai_settings.json`
-2. 填入你的 API Key（或在桌面应用「设置」页面配置）
+需要打开 **两个** CMD 窗口：
 
-内置 5 种分析模板：内容质量评估、爆款潜力预测、违规风险检测、竞品分析、内容改写建议。
-模板定义在 `config/ai_presets.json`，可自行编辑。
+**CMD 窗口 1 — 启动后端服务：**
 
-## 安装（CLI 模式）
-
-### 环境要求
-
-- Python 3.10+
-- Google Chrome 浏览器
-- Windows 操作系统（目前仅测试 Windows）
-- Node.js 18+（桌面应用需要）
-
-### 安装依赖
-
-```bash
-pip install -r requirements.txt
 ```
-
-可选本地 Web 控制台（需额外依赖）：
-
-```bash
-pip install -r requirements-app.txt
+cd 你的项目路径
 python scripts/serve_local_app.py
 ```
 
-浏览器访问 `http://127.0.0.1:8765`（可用环境变量 `XHS_APP_HOST` / `XHS_APP_PORT` 修改）。
+看到类似以下输出表示启动成功：
 
-## 快速开始
-
-### 1. 首次登录
-
-```bash
-python scripts/cdp_publish.py login
+```
+INFO:     Uvicorn running on http://127.0.0.1:8765
 ```
 
-在弹出的 Chrome 窗口中扫码登录小红书。
+> 这个窗口不要关闭！后端服务需要一直运行。
 
-说明：当前发布链路已按 2026 年 2-3 月的小红书创作者中心改版调整过选择器与等待策略；如果后续再次改版，优先检查 `scripts/cdp_publish.py` 中的 `SELECTORS`、多图上传等待和发布按钮点击逻辑。
+**CMD 窗口 2 — 启动桌面前端：**
 
-### AI：检索 → 打分 → 生图 → 草稿（预览）
-
-1. 复制 `config/external_ai.json.example` 为 `config/external_ai.json`，填写你的打分/生图 API（密钥建议用环境变量，如 `Bearer ${XHS_SCORE_API_KEY}`）。
-2. 准备标题、正文文件（可由任意 LLM 生成）。
-3. 一键串联示例（默认只填草稿、不点发布）：
-
-```bash
-python scripts/ai_content_pipeline.py run ^
-  --keyword "春招" ^
-  --title-file D:\abs\title.txt ^
-  --content-file D:\abs\content.txt ^
-  --config config\external_ai.json ^
-  --prompt-file D:\abs\image_prompt.txt ^
-  --image-count 3
+```
+cd 你的项目路径\desktop
+npm run dev
 ```
 
-或使用分步命令：`fetch-search`、`merge-scores`、`score-api`、`image-api`、`save-draft`。约定见 [docs/ai-workflow.md](docs/ai-workflow.md)。
+稍等几秒，桌面应用窗口会自动弹出。
 
-`publish_pipeline.py` 在使用 `--image-urls` 时可加 `--strict-image-downloads`，任意一张图下载失败即退出。
+### 方式二：仅启动后端（浏览器访问）
 
-### 2. 启动/测试浏览器（不发布）
+如果你不想使用 Electron 桌面模式，也可以只启动后端：
+
+```
+cd 你的项目路径
+python scripts/serve_local_app.py
+```
+
+然后在浏览器中打开 `http://127.0.0.1:8765` 即可。
+
+> 注意：仅后端模式下前端 UI 功能有限，推荐使用完整启动方式。
+
+---
+
+## 使用教程
+
+### 1. 启动浏览器
+
+应用启动后，首页会显示三个状态指示灯：
+
+| 指示灯 | 含义 |
+|--------|------|
+| 后端就绪 (绿色) | Python 后端正在运行 |
+| 浏览器运行中 (绿色) | Chrome 或 Edge 已启动 |
+| 已登录 (绿色) | 已登录小红书 |
+
+如果「浏览器」显示未启动：
+- 点击首页的 **「一键启动浏览器」** 按钮，或
+- 前往 **「设置」** 页面，选择浏览器（Chrome/Edge/自动检测），点击 **「启动」**
+
+> 如果你的电脑没有安装 Chrome，应用会自动使用 Edge 浏览器。
+
+### 2. 登录小红书
+
+前往 **「账号管理」** 页面，点击 **「登录小红书」**，支持两种方式：
+
+**扫码登录：**
+1. 选择「扫码登录」标签
+2. 等待二维码加载
+3. 打开手机上的小红书 App，扫描屏幕上的二维码
+4. 在手机上确认登录
+5. 页面会自动跳转显示「登录成功」
+
+**手机号登录：**
+1. 选择「手机号登录」标签
+2. 输入手机号码
+3. 点击「获取验证码」
+4. 输入收到的短信验证码
+5. 点击「确认登录」
+
+### 3. 搜索笔记
+
+1. 点击左侧 **「搜索」** 菜单
+2. **关键词搜索**：输入关键词（如「美食推荐」），在 **目标条数** 区选择 20/30/50… 或在自定义框输入 5–200 后点「应用」；点「搜索」执行
+3. 点 **筛选** 图标可展开排序（综合/最新等）与类型（视频/图文）
+4. **首页推荐流**：切换到同一页顶部的「首页推荐流」，点「加载首页推荐」或「刷新列表」，抓取当前登录账号的首页 feed（与 CLI `list-feeds` 同源）
+5. 点击任意笔记卡片，右侧打开摘要；在详情区可使用 **仅加载详情 JSON** 或 **详情 + 评论**（勾选「滚动加载更多一级评论」时较慢，对应 CDP 详情页的评论滚动）
+
+### 4. AI 分析
+
+1. 点击左侧 **「AI 工作台」** 菜单
+2. 选择 **检索条数**（与搜索页逻辑一致，先拉取足够多笔记再取前 10 条送 AI）
+3. 输入分析主题，选择预设（质量评估、爆款预测等），点击「分析」
+4. 若在「设置」中配置了 **屏蔽词**，标题/描述/作者命中屏蔽词的笔记会在服务端过滤，界面会提示过滤篇数
+5. **切换页面不会清空输入或中断任务**：分析请求在后台继续执行，完成后可随时回到「AI 工作台」查看结果
+
+> 需要先在「设置」页面配置 AI API Key。仅修改屏蔽词等项时，**可不重填 API Key**（留空保存会保留原密钥）。  
+> 调试火山引擎等接口时，可在启动后端前设置环境变量 `XHS_AI_DEBUG=1`，仅在控制台打印请求 URL 与模型名（默认不打印）。
+
+### 5. 生成报告
+
+1. 点击左侧 **「内容报告」** 菜单
+2. 选择 **检索条数**，输入关键词，点击「生成报告」
+3. 报告生成后，顶部和底部都有下载按钮，支持三种格式：
+   - **Markdown**：纯文本格式，适合在笔记软件中编辑
+   - **HTML 网页**：排版精美的网页文件，可直接用浏览器打开
+   - **JSON 数据**：结构化数据，适合二次处理或导入其他工具
+4. 若启用屏蔽词，报告顶部会提示过滤掉的候选笔记数量
+5. 左侧栏会记录历史报告，点击可随时回看
+
+### 6. 设置页面
+
+**浏览器设置：**
+- 选择浏览器：自动检测 / Google Chrome / Microsoft Edge
+- 启动或停止浏览器
+
+**AI 服务配置：**
+- 选择 API 提供商（OpenAI / Claude / 自定义）
+- 填入 API Key（**留空并保存不会清空已保存的 Key**）
+- 选择模型、Base URL（如火山引擎 ARK）、Max Tokens
+- **内容屏蔽词**：每行一词或逗号分隔；仅影响 AI 工作台与内容报告，搜索列表仍显示全部结果
+
+---
+
+## 常见问题（FAQ）
+
+### Q: 启动时显示"后端服务未启动"怎么办？
+
+请确保你在另一个 CMD 窗口中运行了 `python scripts/serve_local_app.py`，并且没有报错。
+
+### Q: 点击"启动浏览器"没反应或报错？
+
+1. 确认你安装了 Google Chrome 或 Microsoft Edge
+2. 在设置页面尝试切换到另一个浏览器
+3. 确保没有其他程序占用了 9222 端口
+
+### Q: 扫码登录显示"Failed to fetch"？
+
+这是因为后端服务未启动或浏览器未启动。按以下顺序操作：
+1. 先启动后端：`python scripts/serve_local_app.py`
+2. 再在应用中启动浏览器
+3. 然后尝试登录
+
+### Q: 只安装了 Edge，没有 Chrome 可以用吗？
+
+可以。应用支持自动检测可用浏览器。在「设置」页面可以手动选择 Edge。
+
+### Q: AI 功能怎么配置？
+
+1. 你需要一个 AI 服务的 API Key（如 OpenAI 的 API Key）
+2. 前往「设置」页面
+3. 选择提供商，填入 API Key，选择模型
+4. 点击「保存设置」
+
+### Q: 设置页、首页内容太长，下面看不到？
+
+主内容区已支持上下滚动。若仍无法滚动，请将 `desktop` 依赖更新后重新 `npm run dev`，并确认窗口未处于异常最大化状态。
+
+### Q: 屏蔽词有什么用？
+
+在「设置」里配置的词会在 **AI 分析** 和 **生成报告** 前过滤笔记（标题、描述、作者名中任一包含即剔除，不区分大小写）。搜索页展示的列表不受屏蔽词影响。
+
+### Q: `npm run dev` 报错 "electron is not recognized"？
+
+请确保你在 `desktop` 目录下执行了 `npm install`。
+
+### Q: `pip install` 报错？
+
+- 确认 Python 已添加到 PATH（安装时勾选了 "Add to PATH"）
+- 尝试使用 `pip3 install -r requirements.txt`
+- 如果网络不佳，可使用国内镜像：`pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple`
+
+### Q: 登录状态会过期吗？
+
+登录状态保存在浏览器的 Profile 目录中，一般可持续较长时间。如果提示需要重新登录，重新扫码或输入验证码即可。
+
+---
+
+## 项目结构
+
+```
+XiaohongshuSkills-main/
+├── scripts/                    # Python 后端核心
+│   ├── serve_local_app.py      # FastAPI 后端 API 服务
+│   ├── cdp_publish.py          # CDP 自动化（登录/搜索/发布）
+│   ├── chrome_launcher.py      # Chrome/Edge 浏览器生命周期管理
+│   ├── ai_llm_client.py        # AI LLM 调用层
+│   ├── ai_content_pipeline.py  # 可选：检索+打分+生图流水线
+│   ├── account_manager.py      # 多账号管理
+│   └── ...
+├── desktop/                    # Electron + React 桌面前端
+│   ├── electron/               # Electron 主进程
+│   │   ├── main.ts             # 窗口创建 + Python 后端管理
+│   │   ├── preload.ts          # 安全通信桥接
+│   │   └── python-manager.ts   # Python 进程管理
+│   ├── src/                    # React 前端源码
+│   │   ├── pages/              # 各功能页面
+│   │   ├── components/         # 通用 UI 组件
+│   │   ├── services/api.ts     # 前后端 API 通信
+│   │   ├── App.tsx             # 路由配置
+│   │   └── main.tsx            # 入口文件
+│   └── package.json
+├── config/                     # 配置文件
+│   ├── ai_presets.json         # AI 分析预设 prompt 模板
+│   ├── ai_settings.json.example
+│   ├── accounts.json.example
+│   └── external_ai.json.example
+├── requirements.txt            # Python 核心依赖
+├── requirements-app.txt        # Python Web 服务依赖
+├── SKILL.md                    # AI Agent Skill 定义
+├── AGENTS.md                   # 仓库开发指南
+└── README.md                   # 本文件
+```
+
+---
+
+## CLI 模式（高级用户）
+
+除了桌面应用，所有功能也可以通过命令行使用：
 
 ```bash
-# 启动测试浏览器（有窗口，推荐）
+# 启动浏览器（自动检测 Chrome/Edge）
 python scripts/chrome_launcher.py
+python scripts/chrome_launcher.py --browser edge
+python scripts/chrome_launcher.py --browser chrome
 
-# 无头启动测试浏览器
-python scripts/chrome_launcher.py --headless
-
-# 检查当前登录状态
-python scripts/cdp_publish.py check-login
-
-# 获取登录二维码（返回 Base64，可供远程前端直接展示）
-python scripts/cdp_publish.py get-login-qrcode
-
-# 可选：优先复用已有标签页（减少有窗口模式下切到前台）
-python scripts/cdp_publish.py check-login --reuse-existing-tab
-
-# 连接远程 CDP（Chrome 在另一台机器）
-python scripts/cdp_publish.py --host 10.0.0.12 --port 9222 check-login
-
-# 重启测试浏览器
-python scripts/chrome_launcher.py --restart
-
-# 关闭测试浏览器
-python scripts/chrome_launcher.py --kill
-```
-
-### 3. 发布内容
-
-```bash
-# 无头模式（推荐，默认自动发布）
-python scripts/publish_pipeline.py --headless \
-    --title "文章标题" \
-    --content "文章正文" \
-    --image-urls "https://example.com/image.jpg"
-
-# 有窗口预览模式（仅填充，不自动点发布）
-python scripts/publish_pipeline.py \
-    --preview \
-    --title "文章标题" \
-    --content "文章正文" \
-    --image-urls "https://example.com/image.jpg"
-
-# 可选：优先复用已有标签页（减少有窗口模式下切到前台）
-python scripts/publish_pipeline.py --reuse-existing-tab \
-    --title "文章标题" \
-    --content "文章正文" \
-    --image-urls "https://example.com/image.jpg"
-
-# 连接远程 CDP 并发布（远程 Chrome 需已开启调试端口）
-python scripts/publish_pipeline.py --host 10.0.0.12 --port 9222 \
-    --title "文章标题" \
-    --content "文章正文" \
-    --image-urls "https://example.com/image.jpg"
-
-# 从文件读取内容
-python scripts/publish_pipeline.py --headless \
-    --title-file title.txt \
-    --content-file content.txt \
-    --image-urls "https://example.com/image.jpg"
-
-# 正文最后一行可放话题标签（最多 10 个）
-# 例如 content.txt 最后一行：
-# #春招 #26届 #校招 #求职 #找工作
-
-# 使用本地图片
-python scripts/publish_pipeline.py --headless \
-    --title "文章标题" \
-    --content "文章正文" \
-    --images "C:\path\to\image.jpg"
-
-# WSL/远程 CDP + Windows/UNC 路径可跳过本地文件预校验
-python scripts/publish_pipeline.py --headless \
-    --title "文章标题" \
-    --content "文章正文" \
-    --images "\\wsl.localhost\Ubuntu\home\user\image.jpg" \
-    --skip-file-check
-
-```
-
-### 4. 多账号管理
-
-```bash
-# 列出所有账号
-python scripts/cdp_publish.py list-accounts
-
-# 添加新账号
-python scripts/cdp_publish.py add-account myaccount --alias "我的账号"
-
-# 登录指定账号
-python scripts/cdp_publish.py --account myaccount login
-
-# 使用指定账号发布
-python scripts/publish_pipeline.py --account myaccount --headless \
-    --title "标题" --content "正文" --image-urls "URL"
-
-# 设置默认账号
-python scripts/cdp_publish.py set-default-account myaccount
-
-# 切换账号（清除当前登录，重新扫码）
-python scripts/cdp_publish.py switch-account
-```
-
-### 5. 搜索内容、查看笔记详情与互动操作
-
-```bash
-# 首页推荐列表
-python scripts/cdp_publish.py list-feeds
-
-# 搜索笔记（可选筛选）
-python scripts/cdp_publish.py search-feeds --keyword "春招"
-python scripts/cdp_publish.py search-feeds --keyword "春招" --sort-by 最新 --note-type 图文
-
-# 获取笔记详情（feed_id 与 xsec_token 可从搜索结果中获取）
-python scripts/cdp_publish.py get-feed-detail \
-    --feed-id 67abc1234def567890123456 \
-    --xsec-token YOUR_XSEC_TOKEN
-
-# 可选：滚动加载更多一级评论，并尝试展开二级回复
-python scripts/cdp_publish.py get-feed-detail \
-    --feed-id 67abc1234def567890123456 \
-    --xsec-token YOUR_XSEC_TOKEN \
-    --load-all-comments \
-    --limit 20 \
-    --click-more-replies \
-    --reply-limit 10 \
-    --scroll-speed normal
-
-# 给笔记发表评论（一级评论）
-python scripts/cdp_publish.py post-comment-to-feed \
-    --feed-id 67abc1234def567890123456 \
-    --xsec-token YOUR_XSEC_TOKEN \
-    --content "写得很实用，感谢分享！"
-
-# 回复指定评论（可按评论ID / 作者 / 文本片段定位）
-python scripts/cdp_publish.py respond-comment \
-    --feed-id 67abc1234def567890123456 \
-    --xsec-token YOUR_XSEC_TOKEN \
-    --comment-id COMMENT_ID \
-    --content "感谢你的反馈～"
-
-# 点赞 / 取消点赞
-python scripts/cdp_publish.py note-upvote --feed-id 67abc1234def567890123456 --xsec-token YOUR_XSEC_TOKEN
-python scripts/cdp_publish.py note-unvote --feed-id 67abc1234def567890123456 --xsec-token YOUR_XSEC_TOKEN
-
-# 收藏 / 取消收藏
-python scripts/cdp_publish.py note-bookmark --feed-id 67abc1234def567890123456 --xsec-token YOUR_XSEC_TOKEN
-python scripts/cdp_publish.py note-unbookmark --feed-id 67abc1234def567890123456 --xsec-token YOUR_XSEC_TOKEN
-
-# 用户主页快照 / 用户主页笔记列表
-python scripts/cdp_publish.py profile-snapshot --user-id USER_ID
-python scripts/cdp_publish.py notes-from-profile --user-id USER_ID --limit 20 --max-scrolls 3
-
-# 抓取“评论和@”通知接口（you/mentions）
-python scripts/cdp_publish.py get-notification-mentions
-```
-
-说明：`list-feeds` 返回首页推荐 feed 列表；`search-feeds` 会先在搜索框输入关键词，抓取下拉推荐词（`recommended_keywords`），再回车拉取 feed 列表。
-说明：`get-feed-detail --load-all-comments` 会在详情页滚动评论区，并可选点击“更多回复”后再提取 `window.__INITIAL_STATE__`。
-
-### 6. 获取内容数据表（content_data）
-
-```bash
-# 抓取“笔记基础信息”数据表
-python scripts/cdp_publish.py content-data
-
-# 下划线别名
-python scripts/cdp_publish.py content_data
-
-# 导出 CSV
-python scripts/cdp_publish.py content-data --csv-file "/abs/path/content_data.csv"
-```
-
-## 命令参考
-
-### 话题标签（publish_pipeline.py）
-
-- 从正文中提取规则：若“最后一个非空行”全部由 `#标签` 组成，则提取为话题标签并从正文移除。
-- 标签输入策略：逐个输入 `#标签`，等待 `3` 秒，再发送 `Enter` 进行确认。
-- 建议数量：`1-10` 个标签；超过平台限制时请手动精简。
-- 示例（正文最后一行）：`#春招 #26届 #校招 #春招规划 #面试`
-
-### publish_pipeline.py
-
-统一发布入口，一条命令完成全部流程。
-
-```bash
-python scripts/publish_pipeline.py [选项]
-
-选项:
-  --title TEXT           文章标题
-  --title-file FILE      从文件读取标题
-  --content TEXT         文章正文
-  --content-file FILE    从文件读取正文
-  --image-urls URL...    图片 URL 列表
-  --images FILE...       本地图片文件列表
-  --skip-file-check      跳过本地媒体文件存在性检查（WSL/远程 CDP/UNC 路径可用）
-  --preserve-upload-paths 强制保留原始上传路径，不将反斜杠转换为正斜杠
-  --host HOST            CDP 主机地址（默认 127.0.0.1）
-  --port PORT            CDP 端口（默认 9222）
-  --headless             无头模式（无浏览器窗口）
-  --reuse-existing-tab   优先复用已有标签页（默认关闭）
-  --account NAME         指定账号
-  --auto-publish         兼容参数：默认已自动发布（可省略）
-  --preview              预览模式：仅填充内容，不点击发布
-  --strict-image-downloads  使用 --image-urls 时，任一下载失败则立即退出
-```
-
-说明：启用 `--reuse-existing-tab` 后，发布流程仍会自动导航到发布页，因此会刷新到目标页面再继续执行。
-说明：当 `--host` 非 `127.0.0.1/localhost` 时为远程模式，会跳过本地 `chrome_launcher.py` 的自动启动/重启逻辑，请确保远程 CDP 地址可达。
-说明：当控制端运行在 WSL、但媒体路径使用 Windows/UNC（如 `\\wsl.localhost\...`）时，可加 `--skip-file-check` 跳过 Linux 侧 `isfile` 预校验。
-说明：脚本现在会自动识别 `C:\...`、`\\wsl.localhost\...` 等 Windows/UNC 路径，并在传给 `DOM.setFileInputFiles` 时保留原始形态。
-说明：若仍想强制关闭路径改写，可显式加 `--preserve-upload-paths`。
-说明：`publish_pipeline.py` 默认会自动点击发布；如需人工确认，请显式加 `--preview`。
-
-### cdp_publish.py
-
-底层发布控制，支持分步操作。
-
-```bash
 # 检查登录状态
 python scripts/cdp_publish.py check-login
-python scripts/cdp_publish.py check-login --reuse-existing-tab
-python scripts/cdp_publish.py --host 10.0.0.12 --port 9222 check-login
 
-# 填写表单（不发布）
-python scripts/cdp_publish.py fill --title "标题" --content "正文" --images img.jpg
-python scripts/cdp_publish.py fill --title "标题" --content "正文" --images img.jpg --reuse-existing-tab
-python scripts/cdp_publish.py --host 10.0.0.12 --port 9222 fill --title "标题" --content "正文" --images img.jpg
+# 搜索笔记
+python scripts/cdp_publish.py search-feeds --keyword "春招面试"
 
-# 点击发布按钮
-python scripts/cdp_publish.py click-publish
+# 获取笔记详情
+python scripts/cdp_publish.py get-feed-detail --feed-id ID --xsec-token TOKEN
 
-# 获取登录二维码（支持下划线别名：get_login_qrcode）
-python scripts/cdp_publish.py get-login-qrcode
+# 发布图文
+python scripts/publish_pipeline.py --headless \
+  --title "标题" --content "正文" \
+  --image-urls "https://example.com/img.jpg"
 
-# 首页推荐列表（支持下划线别名：list_feeds）
-python scripts/cdp_publish.py list-feeds
-
-# 搜索笔记（支持下划线别名：search_feeds）
-python scripts/cdp_publish.py search-feeds --keyword "春招"
-python scripts/cdp_publish.py search-feeds --keyword "春招" --sort-by 最新 --note-type 图文
-
-# 获取笔记详情（支持下划线别名：get_feed_detail）
-python scripts/cdp_publish.py get-feed-detail --feed-id FEED_ID --xsec-token XSEC_TOKEN
-python scripts/cdp_publish.py get-feed-detail --feed-id FEED_ID --xsec-token XSEC_TOKEN --load-all-comments --limit 20 --click-more-replies --reply-limit 10 --scroll-speed normal
-
-# 发表评论（支持下划线别名：post_comment_to_feed）
-python scripts/cdp_publish.py post-comment-to-feed --feed-id FEED_ID --xsec-token XSEC_TOKEN --content "评论内容"
-
-# 回复评论（支持下划线别名：respond_comment）
-python scripts/cdp_publish.py respond-comment --feed-id FEED_ID --xsec-token XSEC_TOKEN --content "回复内容" [--comment-id COMMENT_ID]
-
-# 点赞/取消点赞（支持下划线别名：note_upvote / note_unvote）
-python scripts/cdp_publish.py note-upvote --feed-id FEED_ID --xsec-token XSEC_TOKEN
-python scripts/cdp_publish.py note-unvote --feed-id FEED_ID --xsec-token XSEC_TOKEN
-
-# 收藏/取消收藏（支持下划线别名：note_bookmark / note_unbookmark）
-python scripts/cdp_publish.py note-bookmark --feed-id FEED_ID --xsec-token XSEC_TOKEN
-python scripts/cdp_publish.py note-unbookmark --feed-id FEED_ID --xsec-token XSEC_TOKEN
-
-# 用户主页快照/主页笔记（支持下划线别名：profile_snapshot / notes_from_profile）
-python scripts/cdp_publish.py profile-snapshot --profile-url "https://www.xiaohongshu.com/user/profile/USER_ID"
-python scripts/cdp_publish.py notes-from-profile --user-id USER_ID --limit 20 --max-scrolls 3
-
-# 抓取通知评论接口（支持下划线别名：get_notification_mentions）
-python scripts/cdp_publish.py get-notification-mentions
-
-# 获取内容数据表（支持下划线别名：content_data）
-python scripts/cdp_publish.py content-data
-python scripts/cdp_publish.py content-data --csv-file "/abs/path/content_data.csv"
-
-# 账号管理
-python scripts/cdp_publish.py login
-python scripts/cdp_publish.py list-accounts
-python scripts/cdp_publish.py add-account NAME [--alias ALIAS]
-python scripts/cdp_publish.py remove-account NAME [--delete-profile]
-python scripts/cdp_publish.py set-default-account NAME
-python scripts/cdp_publish.py switch-account
-```
-
-说明：`list-feeds`、`search-feeds`、`get-feed-detail`、`post-comment-to-feed`、`respond-comment`、`note-upvote`、`note-unvote`、`note-bookmark`、`note-unbookmark`、`profile-snapshot`、`notes-from-profile` 与 `get-notification-mentions` 会校验 `xiaohongshu.com` 主页登录态（非创作者中心登录态）。
-说明：登录态检查默认启用本地缓存（12 小时，仅缓存“已登录”结果），到期后自动重新走网页校验。
-说明：`get-login-qrcode` 返回 `qrcode_base64` / `qrcode_data_url`，便于远程前端直接展示扫码。
-说明：`search-feeds` 输出新增 `recommended_keywords_count` 与 `recommended_keywords` 字段，表示输入关键词后回车前的下拉推荐词。
-说明：`get-feed-detail --load-all-comments` 额外返回 `comment_loading`，用于说明评论滚动加载结果。
-说明：`content-data` 会校验创作者中心登录态，并抓取 `statistics/data-analysis` 页面中的笔记基础信息表。
-
-### chrome_launcher.py
-
-Chrome 浏览器管理。
-
-```bash
-# 启动 Chrome
-python scripts/chrome_launcher.py
-python scripts/chrome_launcher.py --headless
-
-# 重启 Chrome
-python scripts/chrome_launcher.py --restart
-
-# 关闭 Chrome
+# 关闭浏览器
 python scripts/chrome_launcher.py --kill
 ```
 
-## 支持各种 Skill 工具
+更多命令请参考 `SKILL.md`。
 
-本项目可作为 **Claude Code**、**OpenCode**、**OpenClaw** 等支持 Skill 的工具使用：根目录已包含 `SKILL.md` 与 `scripts/`，将整个仓库放入对应工具的技能目录（或配置额外技能路径）即可。
+---
 
-- Claude Code：见 [docs/claude-code-integration.md](docs/claude-code-integration.md)（示例路径 `.claude/skills/post-to-xhs/`）。
-- **OpenClaw**：见 [docs/openclaw-integration.md](docs/openclaw-integration.md)（加载路径、`openclaw skills list`、ClawHub 说明）。
+## 安全说明
 
-## 注意事项
-
-1. **仅供学习研究**：请遵守小红书平台规则，不要用于违规内容发布
-2. **登录安全**：Cookie 存储在本地 Chrome Profile 中，请勿泄露
-3. **选择器更新**：如果小红书页面结构变化导致发布失败，需要更新 `cdp_publish.py` 中的选择器
-4. feed 的图片类型
-- WB_PRV：预览图（preview），通常更轻、更快，适合列表卡片。
-  - WB_DFT：默认图（default），通常用于详情展示，质量/尺寸更完整。
-
-## RoadMap
-- [x] 支持更多账号管理功能
-- [x] 支持发布功能
-- [x] 增加后台笔记获取功能
-- [x] 支持自动评论
-- [x] 支持素材检索功能
-- [x] 增加更多错误处理机制
-
-
-## 许可证
-
-MIT License
-
-## 联系方式
-
-微信号：`whitedewstory`
-
-<img src="public/whitedew.jpg" alt="微信二维码" width="240" />
-
-### 知识星球，分享最新的使用技巧
-<img src="20260302-141029.jpg" alt="知识星球二维码" width="240" />
-
-## Stars
-[![Stargazers over time](https://starchart.cc/white0dew/XiaohongshuSkills.svg?variant=adaptive)](https://starchart.cc/white0dew/XiaohongshuSkills)
-
-## 致谢
-灵感来自：[Post-to-xhs](https://github.com/Angiin/Post-to-xhs)
+- **API Key 仅存储在本地** `config/ai_settings.json` 文件中，不会上传到任何服务器
+- **登录状态** 保存在本地浏览器 Profile 目录中
+- 不要将 `config/ai_settings.json`、`config/accounts.json` 等包含敏感信息的文件提交到 Git
+- 本工具仅用于个人内容分析和学习研究，请遵守小红书平台的使用规范

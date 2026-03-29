@@ -98,7 +98,7 @@ export function AccountsPage() {
             onClick={() => setShowLogin(true)}
             className="px-4 py-2 bg-brand-500 text-white text-sm rounded-lg hover:bg-brand-600 flex items-center gap-1.5"
           >
-            <MonitorSmartphone size={16} /> 扫码登录
+            <MonitorSmartphone size={16} /> 登录小红书
           </button>
           <button
             onClick={() => setShowAdd(!showAdd)}

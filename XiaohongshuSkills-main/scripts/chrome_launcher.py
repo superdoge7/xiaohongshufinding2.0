@@ -1,9 +1,10 @@
 """
-Chrome launcher with CDP remote debugging support.
+Chrome/Edge launcher with CDP remote debugging support.
 
-Manages a dedicated Chrome instance for Xiaohongshu publishing:
-- Detects if Chrome is already listening on the debug port
-- Launches Chrome with a dedicated user-data-dir for login persistence
+Manages a dedicated Chromium-based browser instance for Xiaohongshu publishing:
+- Supports Google Chrome and Microsoft Edge (auto-detect or user-select)
+- Detects if browser is already listening on the debug port
+- Launches browser with a dedicated user-data-dir for login persistence
 - Waits for the debug port to become available
 - Supports headless mode for automated publishing without GUI
 - Supports switching between headless and headed mode (e.g. for login)
@@ -19,17 +20,46 @@ from typing import Optional
 
 CDP_PORT = 9222
 PROFILE_DIR_NAME = "XiaohongshuProfile"
-STARTUP_TIMEOUT = 15  # seconds to wait for Chrome to start
+STARTUP_TIMEOUT = 15  # seconds to wait for browser to start
 
-# Track the Chrome process we launched so we can kill it later
+# Track the browser process we launched so we can kill it later
 _chrome_process: subprocess.Popen | None = None
 # Track the current account being used
 _current_account: Optional[str] = None
+# Track which browser is active
+_active_browser: str = "auto"
 
 
-def get_chrome_path() -> str:
-    """Find Chrome executable on Windows/macOS/Linux."""
-    candidates = []
+def get_edge_path() -> str | None:
+    """Find Microsoft Edge executable. Returns None if not found."""
+    candidates: list[str] = []
+
+    if sys.platform == "win32":
+        for env_var in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"):
+            base = os.environ.get(env_var, "")
+            if base:
+                candidates.append(
+                    os.path.join(base, "Microsoft", "Edge", "Application", "msedge.exe")
+                )
+    elif sys.platform == "darwin":
+        candidates.append(
+            "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"
+        )
+    else:
+        candidates.extend(["/usr/bin/microsoft-edge", "/usr/bin/microsoft-edge-stable"])
+
+    for path in candidates:
+        if os.path.isfile(path):
+            return path
+
+    import shutil
+    found = shutil.which("msedge") or shutil.which("microsoft-edge")
+    return found
+
+
+def get_chrome_path() -> str | None:
+    """Find Chrome executable. Returns None if not found."""
+    candidates: list[str] = []
 
     if sys.platform == "win32":
         for env_var in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"):
@@ -68,12 +98,59 @@ def get_chrome_path() -> str:
         or shutil.which("chrome")
         or shutil.which("chrome.exe")
     )
-    if found:
-        return found
+    return found
 
+
+def get_browser_path(browser: str = "auto") -> tuple[str, str]:
+    """
+    Find a Chromium-based browser executable.
+
+    Args:
+        browser: "chrome", "edge", or "auto" (try Chrome first, then Edge).
+
+    Returns:
+        Tuple of (executable_path, browser_name).
+    """
+    if browser == "chrome":
+        path = get_chrome_path()
+        if path:
+            return path, "chrome"
+        raise FileNotFoundError(
+            "Google Chrome 未找到。请安装 Google Chrome 或在设置中切换为 Edge 浏览器。"
+        )
+
+    if browser == "edge":
+        path = get_edge_path()
+        if path:
+            return path, "edge"
+        raise FileNotFoundError(
+            "Microsoft Edge 未找到。请安装 Microsoft Edge 或在设置中切换为 Chrome 浏览器。"
+        )
+
+    # auto: try Chrome first, then Edge
+    chrome = get_chrome_path()
+    if chrome:
+        return chrome, "chrome"
+    edge = get_edge_path()
+    if edge:
+        return edge, "edge"
     raise FileNotFoundError(
-        "Chrome not found. Please install Google Chrome or set its path manually."
+        "未找到 Chrome 或 Edge 浏览器。请至少安装其中一个：\n"
+        "  - Google Chrome: https://www.google.com/chrome/\n"
+        "  - Microsoft Edge: https://www.microsoft.com/edge"
     )
+
+
+def detect_available_browsers() -> list[dict[str, str]]:
+    """Return list of available browsers with name and path."""
+    result: list[dict[str, str]] = []
+    chrome = get_chrome_path()
+    if chrome:
+        result.append({"name": "chrome", "label": "Google Chrome", "path": chrome})
+    edge = get_edge_path()
+    if edge:
+        result.append({"name": "edge", "label": "Microsoft Edge", "path": edge})
+    return result
 
 
 def get_user_data_dir(account: Optional[str] = None) -> str:
@@ -112,30 +189,33 @@ def launch_chrome(
     port: int = CDP_PORT,
     headless: bool = False,
     account: Optional[str] = None,
+    browser: str = "auto",
 ) -> subprocess.Popen | None:
     """
-    Launch Chrome with remote debugging enabled.
+    Launch a Chromium-based browser with remote debugging enabled.
 
     Args:
         port: CDP remote debugging port.
-        headless: If True, launch Chrome in headless mode (no GUI window).
+        headless: If True, launch in headless mode (no GUI window).
         account: Account name to use. If None, uses the default account.
+        browser: "chrome", "edge", or "auto".
 
-    Returns the Popen object if a new process was started, or None if Chrome
+    Returns the Popen object if a new process was started, or None if browser
     was already running on the target port.
     """
-    global _chrome_process, _current_account
+    global _chrome_process, _current_account, _active_browser
 
     if is_port_open(port):
-        print(f"[chrome_launcher] Chrome already running on port {port}.")
+        print(f"[chrome_launcher] Browser already running on port {port}.")
         return None
 
-    chrome_path = get_chrome_path()
+    browser_path, browser_name = get_browser_path(browser)
     user_data_dir = get_user_data_dir(account)
     _current_account = account
+    _active_browser = browser_name
 
     cmd = [
-        chrome_path,
+        browser_path,
         f"--remote-debugging-port={port}",
         f"--user-data-dir={user_data_dir}",
         "--no-first-run",
@@ -147,8 +227,8 @@ def launch_chrome(
 
     mode_label = "headless" if headless else "headed"
     account_label = account or "default"
-    print(f"[chrome_launcher] Launching Chrome ({mode_label}, account: {account_label})...")
-    print(f"  executable : {chrome_path}")
+    print(f"[chrome_launcher] Launching {browser_name} ({mode_label}, account: {account_label})...")
+    print(f"  executable : {browser_path}")
     print(f"  profile dir: {user_data_dir}")
     print(f"  debug port : {port}")
 
@@ -159,16 +239,15 @@ def launch_chrome(
     )
     _chrome_process = proc
 
-    # Wait for the debug port to become available
     deadline = time.time() + STARTUP_TIMEOUT
     while time.time() < deadline:
         if is_port_open(port):
-            print(f"[chrome_launcher] Chrome is ready on port {port}.")
+            print(f"[chrome_launcher] {browser_name} is ready on port {port}.")
             return proc
         time.sleep(0.5)
 
     print(
-        f"[chrome_launcher] WARNING: Chrome started but port {port} not responding "
+        f"[chrome_launcher] WARNING: {browser_name} started but port {port} not responding "
         f"after {STARTUP_TIMEOUT}s. It may still be initializing.",
         file=sys.stderr,
     )
@@ -256,48 +335,48 @@ def restart_chrome(
     port: int = CDP_PORT,
     headless: bool = False,
     account: Optional[str] = None,
+    browser: str = "auto",
 ) -> subprocess.Popen | None:
     """
-    Kill the current Chrome instance and relaunch with the specified mode.
-
-    Useful for switching between headless and headed mode (e.g. when login
-    is needed during a headless session), or switching accounts.
+    Kill the current browser instance and relaunch with the specified mode.
 
     Args:
         port: CDP remote debugging port.
         headless: If True, relaunch in headless mode.
         account: Account name to use. If None, uses the default account.
+        browser: "chrome", "edge", or "auto".
 
-    Returns the Popen object for the new Chrome process.
+    Returns the Popen object for the new browser process.
     """
     account_label = account or "default"
     mode_label = "headless" if headless else "headed"
-    print(f"[chrome_launcher] Restarting Chrome ({mode_label}, account: {account_label})...")
+    print(f"[chrome_launcher] Restarting browser ({mode_label}, account: {account_label})...")
     kill_chrome(port)
     time.sleep(1)
-    return launch_chrome(port, headless=headless, account=account)
+    return launch_chrome(port, headless=headless, account=account, browser=browser)
 
 
 def ensure_chrome(
     port: int = CDP_PORT,
     headless: bool = False,
     account: Optional[str] = None,
+    browser: str = "auto",
 ) -> bool:
     """
-    Ensure Chrome is running with remote debugging on the given port.
+    Ensure a Chromium-based browser is running with remote debugging.
 
     Args:
         port: CDP remote debugging port.
         headless: If True, launch in headless mode when starting a new instance.
-            If Chrome is already running, this parameter is ignored.
         account: Account name to use. If None, uses the default account.
+        browser: "chrome", "edge", or "auto".
 
-    Returns True if Chrome is available, False otherwise.
+    Returns True if browser is available, False otherwise.
     """
     if is_port_open(port):
         return True
     try:
-        launch_chrome(port, headless=headless, account=account)
+        launch_chrome(port, headless=headless, account=account, browser=browser)
         return is_port_open(port)
     except FileNotFoundError as e:
         print(f"[chrome_launcher] Error: {e}", file=sys.stderr)
@@ -309,25 +388,32 @@ def get_current_account() -> Optional[str]:
     return _current_account
 
 
+def get_active_browser() -> str:
+    """Get the name of the currently active browser."""
+    return _active_browser
+
+
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser(description="Chrome Launcher for CDP")
+    parser = argparse.ArgumentParser(description="Browser Launcher for CDP (Chrome / Edge)")
     parser.add_argument("--port", type=int, default=CDP_PORT,
                         help=f"CDP remote debugging port (default: {CDP_PORT})")
     parser.add_argument("--headless", action="store_true", help="Launch in headless mode")
-    parser.add_argument("--kill", action="store_true", help="Kill the running Chrome instance")
-    parser.add_argument("--restart", action="store_true", help="Restart Chrome")
+    parser.add_argument("--kill", action="store_true", help="Kill the running browser instance")
+    parser.add_argument("--restart", action="store_true", help="Restart browser")
     parser.add_argument("--account", help="Account name to use (default: default account)")
+    parser.add_argument("--browser", choices=["auto", "chrome", "edge"], default="auto",
+                        help="Browser to use: chrome, edge, or auto (default: auto)")
     args = parser.parse_args()
 
     if args.kill:
         kill_chrome(port=args.port)
-        print("[chrome_launcher] Chrome killed.")
+        print("[chrome_launcher] Browser killed.")
     elif args.restart:
-        restart_chrome(port=args.port, headless=args.headless, account=args.account)
-        print("[chrome_launcher] Chrome restarted.")
-    elif ensure_chrome(port=args.port, headless=args.headless, account=args.account):
-        print("[chrome_launcher] Chrome is ready for CDP connections.")
+        restart_chrome(port=args.port, headless=args.headless, account=args.account, browser=args.browser)
+        print("[chrome_launcher] Browser restarted.")
+    elif ensure_chrome(port=args.port, headless=args.headless, account=args.account, browser=args.browser):
+        print("[chrome_launcher] Browser is ready for CDP connections.")
     else:
-        print("[chrome_launcher] Failed to start Chrome.", file=sys.stderr)
+        print("[chrome_launcher] Failed to start browser.", file=sys.stderr)
         sys.exit(1)

@@ -1,20 +1,32 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useAppContext } from "@/store/AppContext";
 import { api } from "@/services/api";
 import { StatusBadge } from "@/components/StatusBadge";
-import { Search, BrainCircuit, FileText, Zap } from "lucide-react";
+import {
+  Search,
+  BrainCircuit,
+  FileText,
+  Zap,
+  AlertTriangle,
+  RefreshCw,
+  Play,
+  Loader2,
+} from "lucide-react";
 
 export function HomePage() {
   const navigate = useNavigate();
-  const [backendOk, setBackendOk] = useState<boolean | null>(null);
-  const [chromeOk, setChromeOk] = useState<boolean | null>(null);
-  const [loggedIn, setLoggedIn] = useState<boolean | null>(null);
+  const { backendOk, chromeOk, loggedIn, refreshStatus } = useAppContext();
+  const [browserStarting, setBrowserStarting] = useState(false);
 
-  useEffect(() => {
-    api.health().then(() => setBackendOk(true)).catch(() => setBackendOk(false));
-    api.chromeStatus().then((r) => setChromeOk(r.running)).catch(() => setChromeOk(false));
-    api.loginCheck().then((r) => setLoggedIn(r.logged_in)).catch(() => setLoggedIn(false));
-  }, []);
+  const handleStartBrowser = async () => {
+    setBrowserStarting(true);
+    try {
+      await api.chromeStart(false);
+    } catch {}
+    await refreshStatus();
+    setBrowserStarting(false);
+  };
 
   const quickActions = [
     { icon: Search, label: "搜索笔记", desc: "按关键词搜索小红书内容", to: "/search" },
@@ -24,13 +36,18 @@ export function HomePage() {
 
   return (
     <div className="p-8 max-w-4xl mx-auto">
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-gray-900">
-          欢迎使用 RedBook Desktop
-        </h1>
-        <p className="text-gray-500 mt-1">
-          小红书内容检索、AI 分析与报告生成工具
-        </p>
+      <div className="flex items-center justify-between mb-8">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">欢迎使用 RedBook Desktop</h1>
+          <p className="text-gray-500 mt-1">小红书内容检索、AI 分析与报告生成工具</p>
+        </div>
+        <button
+          onClick={() => refreshStatus()}
+          className="p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100"
+          title="刷新状态"
+        >
+          <RefreshCw size={18} />
+        </button>
       </div>
 
       <div className="flex items-center gap-3 mb-8">
@@ -40,7 +57,7 @@ export function HomePage() {
         />
         <StatusBadge
           status={chromeOk === null ? "loading" : chromeOk ? "ok" : "warning"}
-          label={chromeOk === null ? "检查 Chrome..." : chromeOk ? "Chrome 运行中" : "Chrome 未启动"}
+          label={chromeOk === null ? "检查浏览器..." : chromeOk ? "浏览器运行中" : "浏览器未启动"}
         />
         <StatusBadge
           status={loggedIn === null ? "loading" : loggedIn ? "ok" : "warning"}
@@ -48,14 +65,60 @@ export function HomePage() {
         />
       </div>
 
-      {!loggedIn && loggedIn !== null && (
+      {backendOk === false && (
+        <div className="mb-8 p-5 bg-red-50 border border-red-200 rounded-xl">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="w-5 h-5 text-red-500 mt-0.5 flex-shrink-0" />
+            <div className="flex-1">
+              <p className="text-sm font-medium text-red-800">后端服务未启动</p>
+              <p className="text-xs text-red-600 mt-1 mb-3">
+                所有功能依赖后端服务，请先在命令行中启动：
+              </p>
+              <div className="bg-white rounded-lg p-3 text-xs font-mono text-gray-700 space-y-1">
+                <p className="text-gray-400"># 打开 CMD 或 PowerShell，进入项目目录后执行：</p>
+                <p>python scripts/serve_local_app.py</p>
+              </div>
+              <button
+                onClick={() => refreshStatus()}
+                className="mt-3 text-xs font-medium text-red-700 hover:text-red-900 underline"
+              >
+                启动后点此刷新
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {backendOk && chromeOk === false && (
+        <div className="mb-8 p-4 bg-amber-50 border border-amber-200 rounded-xl">
+          <div className="flex items-start gap-3">
+            <Zap className="w-5 h-5 text-amber-600 mt-0.5 flex-shrink-0" />
+            <div className="flex-1">
+              <p className="text-sm font-medium text-amber-800">浏览器未启动</p>
+              <p className="text-xs text-amber-600 mt-1">
+                点击下方按钮启动浏览器，或前往「设置」页面选择浏览器
+              </p>
+              <button
+                onClick={handleStartBrowser}
+                disabled={browserStarting}
+                className="mt-2 px-3 py-1.5 bg-amber-600 text-white text-xs rounded-lg hover:bg-amber-700 disabled:opacity-50 flex items-center gap-1.5"
+              >
+                {browserStarting ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} />}
+                {browserStarting ? "启动中..." : "一键启动浏览器"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {backendOk && chromeOk && !loggedIn && loggedIn !== null && (
         <div className="mb-8 p-4 bg-amber-50 border border-amber-200 rounded-xl">
           <div className="flex items-start gap-3">
             <Zap className="w-5 h-5 text-amber-600 mt-0.5" />
             <div>
               <p className="text-sm font-medium text-amber-800">需要先登录小红书</p>
               <p className="text-xs text-amber-600 mt-1">
-                前往「账号管理」页面扫码登录后即可使用全部功能。
+                前往「账号管理」页面，通过扫码或手机号登录后即可使用全部功能。
               </p>
               <button
                 onClick={() => navigate("/accounts")}

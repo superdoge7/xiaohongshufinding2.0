@@ -14,8 +14,9 @@ import json
 import os
 import subprocess
 import sys
-from pathlib import Path
 import tempfile
+from pathlib import Path
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -45,14 +46,26 @@ if STATIC_DIR.is_dir():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
+def _xiaohongshu_navigate_url_allowed(url: str) -> bool:
+    u = (url or "").strip()
+    if not u.startswith("https://"):
+        return False
+    try:
+        host = (urlparse(u).hostname or "").lower()
+    except ValueError:
+        return False
+    return host == "xiaohongshu.com" or host.endswith(".xiaohongshu.com")
+
+
 class SearchBody(BaseModel):
     keyword: str
     host: str = "127.0.0.1"
     port: int = 9222
     account: str | None = None
-    reuse_existing_tab: bool = False
+    reuse_existing_tab: bool = True
     sort_by: str | None = None
     note_type: str | None = None
+    min_count: int = Field(default=50, ge=5, le=200)
 
 
 class MergeScoresBody(BaseModel):
@@ -75,6 +88,12 @@ class ImageApiBody(BaseModel):
     prompt: str
     count: int = Field(default=3, ge=1, le=4)
     config_path: str | None = None
+
+
+class BrowserNavigateBody(BaseModel):
+    url: str
+    host: str = "127.0.0.1"
+    port: int = 9222
 
 
 class ScoreApiBody(BaseModel):
@@ -111,21 +130,33 @@ def health() -> dict[str, str]:
 
 @app.post("/api/search")
 def api_search(body: SearchBody) -> JSONResponse:
-    from ai_content_pipeline import run_search_feeds
+    from cdp_publish import XiaohongshuPublisher
+    from feed_explorer import SearchFilters
 
+    publisher = XiaohongshuPublisher(host=body.host, port=body.port)
     try:
-        doc = run_search_feeds(
-            body.keyword,
-            host=body.host,
-            port=body.port,
-            account=body.account,
-            reuse_existing_tab=body.reuse_existing_tab,
-            sort_by=body.sort_by,
-            note_type=body.note_type,
+        publisher.connect(reuse_existing_tab=True)
+        if not publisher.check_home_login():
+            raise HTTPException(status_code=401, detail="Not logged in")
+
+        filters = None
+        if body.sort_by or body.note_type:
+            filters = SearchFilters(
+                sort_by=body.sort_by,
+                note_type=body.note_type,
+            )
+        result = publisher.search_feeds(
+            keyword=body.keyword,
+            filters=filters,
+            min_count=body.min_count,
         )
+        return JSONResponse(content=result)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
-    return JSONResponse(content=doc)
+    finally:
+        publisher.disconnect()
 
 
 @app.post("/api/merge-scores")
@@ -262,13 +293,25 @@ class ChromeStartBody(BaseModel):
     headless: bool = False
     port: int = 9222
     account: str | None = None
+    browser: str = "auto"
 
 
 @app.post("/api/chrome/start")
 def api_chrome_start(body: ChromeStartBody) -> JSONResponse:
-    from chrome_launcher import ensure_chrome
-    ok = ensure_chrome(port=body.port, headless=body.headless, account=body.account)
-    return JSONResponse(content={"ok": ok})
+    from chrome_launcher import ensure_chrome, get_active_browser
+    try:
+        ok = ensure_chrome(
+            port=body.port,
+            headless=body.headless,
+            account=body.account,
+            browser=body.browser,
+        )
+        return JSONResponse(content={
+            "ok": ok,
+            "browser": get_active_browser(),
+        })
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @app.post("/api/chrome/stop")
@@ -280,9 +323,18 @@ def api_chrome_stop() -> JSONResponse:
 
 @app.post("/api/chrome/status")
 def api_chrome_status() -> JSONResponse:
-    from chrome_launcher import is_port_open
+    from chrome_launcher import is_port_open, get_active_browser
     running = is_port_open(9222)
-    return JSONResponse(content={"running": running})
+    return JSONResponse(content={
+        "running": running,
+        "browser": get_active_browser() if running else None,
+    })
+
+
+@app.get("/api/chrome/browsers")
+def api_chrome_browsers() -> JSONResponse:
+    from chrome_launcher import detect_available_browsers
+    return JSONResponse(content={"browsers": detect_available_browsers()})
 
 
 # ---------------------------------------------------------------------------
@@ -291,6 +343,12 @@ def api_chrome_status() -> JSONResponse:
 
 @app.post("/api/login/qrcode")
 def api_login_qrcode() -> JSONResponse:
+    from chrome_launcher import is_port_open
+    if not is_port_open(9222):
+        raise HTTPException(
+            status_code=503,
+            detail="浏览器未启动，请先在「设置」页面启动浏览器",
+        )
     from cdp_publish import XiaohongshuPublisher
     publisher = XiaohongshuPublisher()
     try:
@@ -305,6 +363,9 @@ def api_login_qrcode() -> JSONResponse:
 
 @app.post("/api/login/check")
 def api_login_check() -> JSONResponse:
+    from chrome_launcher import is_port_open
+    if not is_port_open(9222):
+        return JSONResponse(content={"logged_in": False, "error": "browser_not_running"})
     from cdp_publish import XiaohongshuPublisher
     publisher = XiaohongshuPublisher()
     try:
@@ -313,6 +374,63 @@ def api_login_check() -> JSONResponse:
         return JSONResponse(content={"logged_in": logged_in})
     except Exception as e:
         return JSONResponse(content={"logged_in": False, "error": str(e)})
+    finally:
+        publisher.disconnect()
+
+
+# ---------------------------------------------------------------------------
+# Phone login (SMS verification code)
+# ---------------------------------------------------------------------------
+
+class PhoneLoginStartBody(BaseModel):
+    phone: str
+    country_code: str = "86"
+
+
+class PhoneLoginVerifyBody(BaseModel):
+    phone: str
+    code: str
+    country_code: str = "86"
+
+
+@app.post("/api/login/phone/start")
+def api_login_phone_start(body: PhoneLoginStartBody) -> JSONResponse:
+    """Navigate to login page, switch to phone mode, fill phone number, click send code."""
+    from chrome_launcher import is_port_open
+    if not is_port_open(9222):
+        raise HTTPException(
+            status_code=503,
+            detail="浏览器未启动，请先在「设置」页面启动浏览器",
+        )
+    from cdp_publish import XiaohongshuPublisher
+    publisher = XiaohongshuPublisher()
+    try:
+        publisher.connect(reuse_existing_tab=True)
+        result = publisher.phone_login_start(body.phone, body.country_code)
+        return JSONResponse(content=result)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    finally:
+        publisher.disconnect()
+
+
+@app.post("/api/login/phone/verify")
+def api_login_phone_verify(body: PhoneLoginVerifyBody) -> JSONResponse:
+    """Fill verification code and complete login."""
+    from chrome_launcher import is_port_open
+    if not is_port_open(9222):
+        raise HTTPException(
+            status_code=503,
+            detail="浏览器未启动，请先在「设置」页面启动浏览器",
+        )
+    from cdp_publish import XiaohongshuPublisher
+    publisher = XiaohongshuPublisher()
+    try:
+        publisher.connect(reuse_existing_tab=True)
+        result = publisher.phone_login_verify(body.code)
+        return JSONResponse(content=result)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
     finally:
         publisher.disconnect()
 
@@ -373,6 +491,11 @@ class FeedDetailBody(BaseModel):
     xsec_token: str
     host: str = "127.0.0.1"
     port: int = 9222
+    load_all_comments: bool = False
+    limit: int = Field(default=20, ge=1, le=200)
+    click_more_replies: bool = False
+    reply_limit: int = Field(default=10, ge=0, le=50)
+    scroll_speed: str = "normal"
 
 
 @app.post("/api/feeds/home")
@@ -383,8 +506,15 @@ def api_home_feeds() -> JSONResponse:
         publisher.connect(reuse_existing_tab=True)
         if not publisher.check_home_login():
             raise HTTPException(status_code=401, detail="Not logged in")
-        feeds = publisher.list_feeds()
-        return JSONResponse(content={"feeds": feeds})
+        raw = publisher.list_feeds()
+        # list_feeds() 返回 {"count": n, "feeds": [...]}，前端需要顶层 feeds 数组
+        if isinstance(raw, dict) and "feeds" in raw:
+            feeds_list = raw["feeds"]
+        else:
+            feeds_list = raw
+        if not isinstance(feeds_list, list):
+            feeds_list = []
+        return JSONResponse(content={"feeds": feeds_list, "count": len(feeds_list)})
     except HTTPException:
         raise
     except Exception as e:
@@ -404,6 +534,11 @@ def api_feed_detail(body: FeedDetailBody) -> JSONResponse:
         detail = publisher.get_feed_detail(
             feed_id=body.feed_id,
             xsec_token=body.xsec_token,
+            load_all_comments=body.load_all_comments,
+            limit=body.limit,
+            click_more_replies=body.click_more_replies,
+            reply_limit=body.reply_limit,
+            scroll_speed=body.scroll_speed,
         )
         return JSONResponse(content=detail)
     except HTTPException:
@@ -414,6 +549,34 @@ def api_feed_detail(body: FeedDetailBody) -> JSONResponse:
         publisher.disconnect()
 
 
+@app.post("/api/browser/navigate")
+def api_browser_navigate(body: BrowserNavigateBody) -> JSONResponse:
+    """在当前 CDP 调试浏览器标签页打开 URL，沿用已登录小红书账号。"""
+    from chrome_launcher import is_port_open
+    if not is_port_open(body.port):
+        raise HTTPException(
+            status_code=503,
+            detail="浏览器未启动或调试端口不可用",
+        )
+    if not _xiaohongshu_navigate_url_allowed(body.url):
+        raise HTTPException(
+            status_code=400,
+            detail="仅允许 https://*.xiaohongshu.com 下的链接",
+        )
+    from cdp_publish import XiaohongshuPublisher
+    publisher = XiaohongshuPublisher(host=body.host, port=body.port)
+    try:
+        publisher.connect(reuse_existing_tab=True)
+        publisher.navigate_current_tab(body.url.strip())
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    finally:
+        publisher.disconnect()
+    return JSONResponse(content={"ok": True})
+
+
 # ---------------------------------------------------------------------------
 # AI analysis endpoints (powered by ai_llm_client)
 # ---------------------------------------------------------------------------
@@ -422,31 +585,43 @@ class AIAnalyzeBody(BaseModel):
     feeds: list[dict]
     preset: str = "quality"
     keyword: str | None = None
+    max_feeds: int = Field(default=10, ge=1, le=50)
 
 
 class AIScoreBatchBody(BaseModel):
     feeds: list[dict]
     preset: str = "quality"
+    max_feeds: int = Field(default=10, ge=1, le=50)
 
 
 class AIGenerateReportBody(BaseModel):
     feeds: list[dict]
     keyword: str
     preset: str | None = None
+    max_feeds: int = Field(default=15, ge=1, le=40)
+    with_illustrations: bool = False
 
 
 class AISettingsSaveBody(BaseModel):
     provider: str
-    api_key: str
+    api_key: str = ""
     model: str
     base_url: str | None = None
+    max_tokens: int = 4096
+    block_words: list[str] = Field(default_factory=list)
+    use_note_covers: bool = False
 
 
 @app.post("/api/ai/analyze")
 def api_ai_analyze(body: AIAnalyzeBody) -> JSONResponse:
     from ai_llm_client import analyze_feeds
     try:
-        result = analyze_feeds(body.feeds, body.preset, keyword=body.keyword)
+        result = analyze_feeds(
+            body.feeds,
+            body.preset,
+            keyword=body.keyword,
+            max_feeds=body.max_feeds,
+        )
         return JSONResponse(content=result)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
@@ -456,7 +631,9 @@ def api_ai_analyze(body: AIAnalyzeBody) -> JSONResponse:
 def api_ai_score_batch(body: AIScoreBatchBody) -> JSONResponse:
     from ai_llm_client import score_feeds_batch
     try:
-        result = score_feeds_batch(body.feeds, body.preset)
+        result = score_feeds_batch(
+            body.feeds, body.preset, max_feeds=body.max_feeds
+        )
         return JSONResponse(content={"scored_feeds": result})
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
@@ -466,7 +643,13 @@ def api_ai_score_batch(body: AIScoreBatchBody) -> JSONResponse:
 def api_ai_generate_report(body: AIGenerateReportBody) -> JSONResponse:
     from ai_llm_client import generate_report
     try:
-        report = generate_report(body.feeds, body.keyword, preset=body.preset)
+        report = generate_report(
+            body.feeds,
+            body.keyword,
+            preset=body.preset,
+            max_feeds=body.max_feeds,
+            with_illustrations=body.with_illustrations,
+        )
         return JSONResponse(content={"report": report})
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
@@ -476,24 +659,39 @@ def api_ai_generate_report(body: AIGenerateReportBody) -> JSONResponse:
 def api_ai_settings_get() -> JSONResponse:
     from ai_llm_client import load_ai_settings
     settings = load_ai_settings()
+    bw = settings.get("block_words", [])
+    if not isinstance(bw, list):
+        bw = []
+    bw = [str(x).strip() for x in bw if str(x).strip()]
     return JSONResponse(content={
         "provider": settings.get("provider", "openai"),
         "api_key_set": bool(settings.get("api_key")),
         "model": settings.get("model", "gpt-4o"),
         "base_url": settings.get("base_url", ""),
+        "max_tokens": settings.get("max_tokens", 4096),
+        "block_words": bw,
+        "use_note_covers": bool(settings.get("use_note_covers", False)),
     })
 
 
 @app.post("/api/ai/settings")
 def api_ai_settings_save(body: AISettingsSaveBody) -> JSONResponse:
-    from ai_llm_client import save_ai_settings
+    from ai_llm_client import load_ai_settings, save_ai_settings
     try:
-        save_ai_settings({
+        existing = load_ai_settings()
+        api_key = (body.api_key or "").strip()
+        if not api_key:
+            api_key = str(existing.get("api_key", "") or "")
+        merged: dict[str, object] = {
             "provider": body.provider,
-            "api_key": body.api_key,
+            "api_key": api_key,
             "model": body.model,
             "base_url": body.base_url or "",
-        })
+            "max_tokens": body.max_tokens,
+            "block_words": list(body.block_words),
+            "use_note_covers": bool(body.use_note_covers),
+        }
+        save_ai_settings(merged)
         return JSONResponse(content={"ok": True})
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e

@@ -1,6 +1,4 @@
-import { useState, useCallback } from "react";
-import { api } from "@/services/api";
-import { FeedCard } from "@/components/FeedCard";
+import { useAppContext } from "@/store/AppContext";
 import {
   BrainCircuit,
   Loader2,
@@ -12,6 +10,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { openArticleLink } from "@/lib/openArticleLink";
 
 const PRESETS = [
   { id: "quality", label: "内容质量评估", icon: Star, desc: "分析文案质量、结构完整性，1-10 打分" },
@@ -21,94 +20,139 @@ const PRESETS = [
   { id: "rewrite", label: "内容改写建议", icon: Sparkles, desc: "基于高分笔记特征给出优化建议" },
 ];
 
+const COUNT_PRESETS = [20, 30, 50, 80, 100];
+const ANALYZE_MAX_PRESETS = [5, 10, 15, 20, 30, 40];
+
 export function AIAnalysisPage() {
-  const [input, setInput] = useState("");
-  const [selectedPreset, setSelectedPreset] = useState("quality");
-  const [loading, setLoading] = useState(false);
-  const [step, setStep] = useState<"idle" | "searching" | "analyzing" | "done">("idle");
-  const [feeds, setFeeds] = useState<Array<Record<string, unknown>>>([]);
-  const [results, setResults] = useState<Array<Record<string, unknown>>>([]);
-  const [summary, setSummary] = useState("");
-  const [error, setError] = useState("");
-
-  const handleSubmit = useCallback(async () => {
-    const q = input.trim();
-    if (!q) return;
-    setLoading(true);
-    setError("");
-    setResults([]);
-    setSummary("");
-
-    try {
-      setStep("searching");
-      const searchRes = await api.searchFeeds(q);
-      const foundFeeds = searchRes.feeds || [];
-      setFeeds(foundFeeds);
-
-      if (foundFeeds.length === 0) {
-        setError("未找到相关笔记，请尝试其他关键词");
-        setStep("idle");
-        setLoading(false);
-        return;
-      }
-
-      setStep("analyzing");
-      const aiRes = await api.aiAnalyze({
-        feeds: foundFeeds.slice(0, 10),
-        preset: selectedPreset,
-        keyword: q,
-      });
-      setResults(aiRes.results || []);
-      setSummary(aiRes.summary || "");
-      setStep("done");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "分析失败");
-      setStep("idle");
-    } finally {
-      setLoading(false);
-    }
-  }, [input, selectedPreset]);
+  const {
+    aiInput,
+    aiSelectedPreset,
+    aiMinCount,
+    aiAnalyzeMaxFeeds,
+    aiLoading,
+    aiStep,
+    aiFeeds,
+    aiResults,
+    aiSummary,
+    aiFilteredByBlock,
+    aiError,
+    setAiInput,
+    setAiSelectedPreset,
+    setAiMinCount,
+    setAiAnalyzeMaxFeeds,
+    runAiAnalysis,
+  } = useAppContext();
 
   return (
-    <div className="flex h-full">
-      <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Header */}
-        <div className="px-6 py-4 bg-white border-b border-gray-200">
-          <div className="flex items-center gap-2 mb-3">
-            <BrainCircuit className="w-5 h-5 text-brand-500" />
+    <div className="flex min-h-0 w-full flex-col">
+      <div className="flex min-h-0 flex-1 flex-col">
+        <div className="shrink-0 border-b border-gray-200 bg-white px-6 py-4">
+          <div className="mb-3 flex items-center gap-2">
+            <BrainCircuit className="h-5 w-5 text-brand-500" />
             <h2 className="font-semibold text-gray-800">AI 工作台</h2>
+            {aiLoading && (
+              <span className="text-xs text-amber-600">
+                任务在后台运行，可切换页面，完成后回到此处查看结果
+              </span>
+            )}
           </div>
 
-          <div className="flex items-center gap-2">
-            <div className="flex-1 relative">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative min-w-[200px] flex-1">
               <input
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && !loading && handleSubmit()}
+                value={aiInput}
+                onChange={(e) => setAiInput(e.target.value)}
+                onKeyDown={(e) =>
+                  e.key === "Enter" && !aiLoading && void runAiAnalysis()
+                }
                 placeholder="输入你的需求，例如：分析春招相关的热门笔记..."
-                className="w-full pl-4 pr-4 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-200 focus:border-brand-400"
+                className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-200"
               />
             </div>
             <button
-              onClick={handleSubmit}
-              disabled={loading || !input.trim()}
-              className="px-5 py-2.5 bg-brand-500 text-white text-sm font-medium rounded-lg hover:bg-brand-600 disabled:opacity-50 flex items-center gap-1.5"
+              type="button"
+              onClick={() => void runAiAnalysis()}
+              disabled={aiLoading || !aiInput.trim()}
+              className="flex items-center gap-1.5 rounded-lg bg-brand-500 px-5 py-2.5 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50"
             >
-              {loading ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+              {aiLoading ? (
+                <Loader2 size={16} className="animate-spin" />
+              ) : (
+                <Send size={16} />
+              )}
               分析
             </button>
           </div>
 
-          {/* Preset selection */}
-          <div className="mt-3 flex gap-2 flex-wrap">
+          <div className="mt-3">
+            <label className="mb-1 block text-xs text-gray-500">
+              检索条数（与搜索页一致，先拉取候选笔记）
+            </label>
+            <div className="flex flex-wrap gap-1">
+              {COUNT_PRESETS.map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  onClick={() => setAiMinCount(n)}
+                  className={cn(
+                    "rounded-md border px-2.5 py-1 text-xs transition-colors",
+                    aiMinCount === n
+                      ? "border-brand-300 bg-brand-50 text-brand-700"
+                      : "border-gray-200 text-gray-600 hover:bg-gray-50"
+                  )}
+                >
+                  {n}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="mt-3">
+            <label className="mb-1 block text-xs text-gray-500">
+              送入模型的笔记条数（屏蔽词过滤后，至多取该数量；默认 10，最大 50）
+            </label>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex flex-wrap gap-1">
+                {ANALYZE_MAX_PRESETS.map((n) => (
+                  <button
+                    key={n}
+                    type="button"
+                    onClick={() => setAiAnalyzeMaxFeeds(n)}
+                    className={cn(
+                      "rounded-md border px-2.5 py-1 text-xs transition-colors",
+                      aiAnalyzeMaxFeeds === n
+                        ? "border-brand-300 bg-brand-50 text-brand-700"
+                        : "border-gray-200 text-gray-600 hover:bg-gray-50"
+                    )}
+                  >
+                    {n}
+                  </button>
+                ))}
+              </div>
+              <input
+                type="number"
+                min={1}
+                max={50}
+                value={aiAnalyzeMaxFeeds}
+                onChange={(e) =>
+                  setAiAnalyzeMaxFeeds(Number(e.target.value) || 1)
+                }
+                className="w-16 rounded-md border border-gray-300 px-2 py-1 text-xs focus:border-brand-400 focus:outline-none focus:ring-1 focus:ring-brand-200"
+                title="自定义 1–50"
+              />
+            </div>
+          </div>
+
+          <div className="mt-3 flex flex-wrap gap-2">
             {PRESETS.map((p) => (
               <button
                 key={p.id}
-                onClick={() => setSelectedPreset(p.id)}
+                type="button"
+                onClick={() => setAiSelectedPreset(p.id)}
                 className={cn(
-                  "flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border transition-colors",
-                  selectedPreset === p.id
-                    ? "bg-brand-50 border-brand-300 text-brand-700"
+                  "flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs transition-colors",
+                  aiSelectedPreset === p.id
+                    ? "border-brand-300 bg-brand-50 text-brand-700"
                     : "border-gray-200 text-gray-600 hover:bg-gray-50"
                 )}
               >
@@ -119,91 +163,105 @@ export function AIAnalysisPage() {
           </div>
         </div>
 
-        {/* Content */}
-        <div className="flex-1 overflow-y-auto p-6 scrollbar-thin">
-          {step === "idle" && !error && (
-            <div className="text-center py-20 text-gray-400">
-              <BrainCircuit className="w-12 h-12 mx-auto mb-3 opacity-40" />
+        <div className="scrollbar-thin min-h-[200px] flex-1 overflow-y-auto p-6">
+          {aiStep === "idle" && !aiError && (
+            <div className="py-20 text-center text-gray-400">
+              <BrainCircuit className="mx-auto mb-3 h-12 w-12 opacity-40" />
               <p>输入需求，AI 将自动搜索并分析相关笔记</p>
-              <p className="text-xs mt-2">
+              <p className="mt-2 text-xs">
                 支持自然语言，如「帮我看看最近关于 AI 绘画的爆款笔记」
               </p>
             </div>
           )}
 
-          {step === "searching" && (
-            <div className="text-center py-20">
-              <Loader2 className="w-8 h-8 animate-spin text-brand-500 mx-auto" />
-              <p className="text-sm text-gray-500 mt-3">正在搜索相关笔记...</p>
+          {aiStep === "searching" && (
+            <div className="py-20 text-center">
+              <Loader2 className="mx-auto h-8 w-8 animate-spin text-brand-500" />
+              <p className="mt-3 text-sm text-gray-500">正在搜索相关笔记...</p>
             </div>
           )}
 
-          {step === "analyzing" && (
-            <div className="text-center py-20">
-              <Loader2 className="w-8 h-8 animate-spin text-brand-500 mx-auto" />
-              <p className="text-sm text-gray-500 mt-3">AI 正在分析 {feeds.length} 篇笔记...</p>
+          {aiStep === "analyzing" && (
+            <div className="py-20 text-center">
+              <Loader2 className="mx-auto h-8 w-8 animate-spin text-brand-500" />
+              <p className="mt-3 text-sm text-gray-500">
+                正在调用模型分析笔记（本次共检索 {aiFeeds.length} 篇，屏蔽词过滤后至多送入{" "}
+                {aiAnalyzeMaxFeeds} 篇）
+              </p>
             </div>
           )}
 
-          {error && (
-            <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600 mb-4">
-              {error}
+          {aiError && (
+            <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-600">
+              {aiError}
             </div>
           )}
 
-          {step === "done" && (
+          {aiStep === "done" && (
             <div className="space-y-6">
-              {summary && (
-                <div className="p-5 bg-white rounded-xl border border-gray-200">
-                  <h3 className="font-medium text-gray-800 mb-2 flex items-center gap-2">
+              {aiFilteredByBlock != null && aiFilteredByBlock > 0 && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                  已根据「设置」中的屏蔽词过滤 {aiFilteredByBlock}{" "}
+                  篇笔记，未参与 AI 分析。
+                </div>
+              )}
+              {aiSummary && (
+                <div className="rounded-xl border border-gray-200 bg-white p-5">
+                  <h3 className="mb-2 flex items-center gap-2 font-medium text-gray-800">
                     <Sparkles size={16} className="text-brand-500" />
                     分析总结
                   </h3>
-                  <p className="text-sm text-gray-600 whitespace-pre-wrap leading-relaxed">
-                    {summary}
+                  <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-600">
+                    {aiSummary}
                   </p>
                 </div>
               )}
 
               <div>
-                <h3 className="font-medium text-gray-800 mb-3">
-                  分析结果（{results.length} 篇）
+                <h3 className="mb-3 font-medium text-gray-800">
+                  分析结果（{aiResults.length} 篇）
                 </h3>
                 <div className="space-y-3">
-                  {results.map((r, idx) => (
+                  {aiResults.map((r, idx) => (
                     <div
                       key={idx}
-                      className="p-4 bg-white rounded-xl border border-gray-200 flex gap-4"
+                      className="flex gap-4 rounded-xl border border-gray-200 bg-white p-4"
                     >
                       <div className="flex-1">
-                        <h4 className="font-medium text-sm text-gray-800">
+                        <h4 className="text-sm font-medium text-gray-800">
                           {(r.title as string) || "无标题"}
                         </h4>
                         {r.score !== undefined && (
-                          <div className="flex items-center gap-1 mt-1">
-                            <Star size={14} className="text-amber-500 fill-amber-500" />
+                          <div className="mt-1 flex items-center gap-1">
+                            <Star
+                              size={14}
+                              className="fill-amber-500 text-amber-500"
+                            />
                             <span className="text-sm font-semibold text-amber-700">
                               {Number(r.score).toFixed(1)}
                             </span>
                             {r.labels && (
-                              <span className="text-xs text-gray-400 ml-2">
+                              <span className="ml-2 text-xs text-gray-400">
                                 {(r.labels as string[]).join(" · ")}
                               </span>
                             )}
                           </div>
                         )}
                         {r.reason && (
-                          <p className="text-xs text-gray-500 mt-2">{r.reason as string}</p>
+                          <p className="mt-2 text-xs text-gray-500">
+                            {r.reason as string}
+                          </p>
                         )}
                         {r.link && (
-                          <a
-                            href={r.link as string}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-xs text-brand-600 hover:underline mt-1 inline-block"
+                          <button
+                            type="button"
+                            onClick={() =>
+                              void openArticleLink(r.link as string)
+                            }
+                            className="mt-1 block text-left text-xs text-brand-600 hover:underline"
                           >
-                            查看原文
-                          </a>
+                            查看原文（已登录浏览器）
+                          </button>
                         )}
                       </div>
                     </div>

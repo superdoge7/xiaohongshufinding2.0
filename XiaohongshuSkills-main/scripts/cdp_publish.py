@@ -855,6 +855,10 @@ class XiaohongshuPublisher:
         self._send("Page.navigate", {"url": url})
         self._sleep(PAGE_LOAD_WAIT, minimum_seconds=1.0)
 
+    def navigate_current_tab(self, url: str) -> None:
+        """Open ``url`` in the connected CDP tab (keeps cookies / 登录态)."""
+        self._navigate(url)
+
     # ------------------------------------------------------------------
     # Login check
     # ------------------------------------------------------------------
@@ -1164,6 +1168,174 @@ class XiaohongshuPublisher:
         }
 
     # ------------------------------------------------------------------
+    # Phone (SMS) login
+    # ------------------------------------------------------------------
+
+    def _navigate_to_login_page(self) -> str:
+        """Navigate to login page and return current URL."""
+        self._navigate(XHS_CREATOR_LOGIN_CHECK_URL)
+        self._sleep(1.5, minimum_seconds=0.6)
+        current_url = self._evaluate("window.location.href")
+        if isinstance(current_url, str) and "login" not in current_url.lower():
+            self._navigate("https://creator.xiaohongshu.com/login")
+            self._sleep(1.5, minimum_seconds=0.6)
+            current_url = self._evaluate("window.location.href")
+        return current_url if isinstance(current_url, str) else ""
+
+    def phone_login_start(self, phone: str, country_code: str = "86") -> dict[str, Any]:
+        """Switch to phone login tab, fill phone number, and request SMS code."""
+        if not self.ws:
+            raise CDPError("Not connected. Call connect() first.")
+
+        current_url = self._navigate_to_login_page()
+
+        if isinstance(current_url, str) and "login" not in current_url.lower():
+            return {"ok": True, "already_logged_in": True, "message": "Already logged in."}
+
+        phone_literal = json.dumps(phone, ensure_ascii=False)
+        result = self._evaluate(f"""
+            (async () => {{
+                const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+                const phone = {phone_literal};
+
+                // Try to find and click the phone/SMS login tab
+                const clickPhoneTab = () => {{
+                    const allEls = document.querySelectorAll(
+                        '[class*="tab"], [class*="login"] span, [class*="login"] div, a, button'
+                    );
+                    const keywords = ["手机号", "短信", "验证码登录", "手机登录", "phone"];
+                    for (const el of allEls) {{
+                        if (!(el instanceof HTMLElement)) continue;
+                        const text = (el.textContent || "").trim();
+                        for (const kw of keywords) {{
+                            if (text.includes(kw)) {{
+                                el.click();
+                                return true;
+                            }}
+                        }}
+                    }}
+                    return false;
+                }};
+
+                clickPhoneTab();
+                await sleep(800);
+                // Try again in case first click didn't work
+                clickPhoneTab();
+                await sleep(600);
+
+                // Find phone input field
+                const phoneInput = document.querySelector(
+                    'input[type="tel"], input[placeholder*="手机"], input[placeholder*="phone"], ' +
+                    'input[placeholder*="号码"], input[name*="phone"], input[name*="mobile"]'
+                );
+                if (!phoneInput) {{
+                    return {{ ok: false, reason: "phone_input_not_found" }};
+                }}
+
+                // Clear and fill phone number
+                phoneInput.focus();
+                phoneInput.value = "";
+                phoneInput.dispatchEvent(new Event("input", {{ bubbles: true }}));
+                await sleep(100);
+                for (const ch of phone) {{
+                    phoneInput.dispatchEvent(new KeyboardEvent("keydown", {{ key: ch, bubbles: true }}));
+                    phoneInput.value += ch;
+                    phoneInput.dispatchEvent(new Event("input", {{ bubbles: true }}));
+                    await sleep(30 + Math.random() * 50);
+                }}
+                phoneInput.dispatchEvent(new Event("change", {{ bubbles: true }}));
+                await sleep(300);
+
+                // Click "send code" button
+                const allBtns = document.querySelectorAll("button, [class*='btn'], [role='button'], span");
+                const sendKeywords = ["发送", "获取验证码", "发送验证码", "获取短信", "Send"];
+                let sent = false;
+                for (const btn of allBtns) {{
+                    if (!(btn instanceof HTMLElement)) continue;
+                    const text = (btn.textContent || "").trim();
+                    for (const kw of sendKeywords) {{
+                        if (text.includes(kw)) {{
+                            btn.click();
+                            sent = true;
+                            break;
+                        }}
+                    }}
+                    if (sent) break;
+                }}
+
+                return {{ ok: true, code_sent: sent, message: sent ? "验证码已发送" : "请手动点击发送验证码按钮" }};
+            }})()
+        """)
+
+        if not isinstance(result, dict):
+            return {"ok": False, "reason": "unexpected_result"}
+        return result
+
+    def phone_login_verify(self, code: str) -> dict[str, Any]:
+        """Fill SMS verification code and submit login."""
+        if not self.ws:
+            raise CDPError("Not connected. Call connect() first.")
+
+        code_literal = json.dumps(code, ensure_ascii=False)
+        result = self._evaluate(f"""
+            (async () => {{
+                const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+                const code = {code_literal};
+
+                // Find verification code input
+                const codeInput = document.querySelector(
+                    'input[placeholder*="验证码"], input[placeholder*="code"], ' +
+                    'input[type="number"][maxlength], input[name*="code"], ' +
+                    'input[name*="captcha"], input[name*="verify"]'
+                );
+                if (!codeInput) {{
+                    return {{ ok: false, reason: "code_input_not_found" }};
+                }}
+
+                // Fill code
+                codeInput.focus();
+                codeInput.value = "";
+                codeInput.dispatchEvent(new Event("input", {{ bubbles: true }}));
+                await sleep(100);
+                for (const ch of code) {{
+                    codeInput.dispatchEvent(new KeyboardEvent("keydown", {{ key: ch, bubbles: true }}));
+                    codeInput.value += ch;
+                    codeInput.dispatchEvent(new Event("input", {{ bubbles: true }}));
+                    await sleep(40 + Math.random() * 60);
+                }}
+                codeInput.dispatchEvent(new Event("change", {{ bubbles: true }}));
+                await sleep(500);
+
+                // Find and click login/submit button
+                const allBtns = document.querySelectorAll("button, [class*='btn'], [role='button']");
+                const loginKeywords = ["登录", "登陆", "确认", "确定", "提交", "Login", "Submit"];
+                let clicked = false;
+                for (const btn of allBtns) {{
+                    if (!(btn instanceof HTMLElement)) continue;
+                    if (btn.offsetParent === null) continue;
+                    const text = (btn.textContent || "").trim();
+                    for (const kw of loginKeywords) {{
+                        if (text.includes(kw)) {{
+                            btn.click();
+                            clicked = true;
+                            break;
+                        }}
+                    }}
+                    if (clicked) break;
+                }}
+
+                await sleep(3000);
+                const currentUrl = window.location.href;
+                const loggedIn = !currentUrl.toLowerCase().includes("login");
+                return {{ ok: true, logged_in: loggedIn, current_url: currentUrl }};
+            }})()
+        """)
+
+        if not isinstance(result, dict):
+            return {"ok": False, "reason": "unexpected_result"}
+        return result
+
+    # ------------------------------------------------------------------
     # Feed discovery actions
     # ------------------------------------------------------------------
 
@@ -1433,19 +1605,83 @@ class XiaohongshuPublisher:
             "suggestions": suggestions,
         }
 
+    def _scroll_search_page_for_more(
+        self,
+        explorer: "FeedExplorer",
+        current_count: int,
+        target_count: int,
+        max_scrolls: int = 20,
+    ) -> list[dict[str, Any]]:
+        """Scroll the search page to load more feeds until target_count or max_scrolls."""
+        feeds: list[dict[str, Any]] = []
+        seen_ids: set[str] = set()
+
+        def _collect(new_feeds: list[dict[str, Any]]) -> None:
+            for f in new_feeds:
+                nc = f.get("noteCard") or f.get("note_card") or f
+                fid = (
+                    (nc.get("noteId") if isinstance(nc, dict) else None)
+                    or (nc.get("note_id") if isinstance(nc, dict) else None)
+                    or (nc.get("id") if isinstance(nc, dict) else None)
+                    or f.get("id")
+                    or ""
+                )
+                if fid and fid not in seen_ids:
+                    seen_ids.add(fid)
+                    feeds.append(f)
+
+        initial = explorer._extract_search_feeds()
+        _collect(initial)
+
+        if len(feeds) >= target_count:
+            return feeds[:target_count]
+
+        for i in range(max_scrolls):
+            self._evaluate(
+                "window.scrollTo(0, document.body.scrollHeight)"
+            )
+            self._sleep(1.5, minimum_seconds=0.8)
+
+            new_feeds = explorer._extract_search_feeds()
+            prev_count = len(feeds)
+            _collect(new_feeds)
+
+            print(
+                f"[cdp_publish] Scroll {i+1}: {len(feeds)} feeds collected "
+                f"(+{len(feeds) - prev_count})"
+            )
+
+            if len(feeds) >= target_count:
+                break
+            if len(feeds) == prev_count:
+                self._sleep(1.0, minimum_seconds=0.5)
+                new_feeds = explorer._extract_search_feeds()
+                _collect(new_feeds)
+                if len(feeds) == prev_count:
+                    print("[cdp_publish] No new feeds after scroll, stopping.")
+                    break
+
+        return feeds[:target_count]
+
     def search_feeds(
         self,
         keyword: str,
         filters: SearchFilters | None = None,
+        min_count: int = 20,
     ) -> dict[str, Any]:
         """
         Search Xiaohongshu feeds by keyword and optional filters.
 
+        Args:
+            keyword: Search keyword.
+            filters: Optional search filters.
+            min_count: Minimum number of feeds to collect (will scroll for more).
+
         Returns:
             {
                 "keyword": str,
-                "recommended_keywords": list[str],  # dropdown related terms
-                "feeds": list[dict[str, Any]],      # extracted from __INITIAL_STATE__
+                "recommended_keywords": list[str],
+                "feeds": list[dict[str, Any]],
             }
         """
         if not self.ws:
@@ -1475,7 +1711,6 @@ class XiaohongshuPublisher:
                 f"reason={reason}"
             )
 
-        # Always navigate with keyword URL to keep feed extraction stable.
         search_url = make_search_url(keyword)
         self._navigate(search_url)
         self._sleep(2, minimum_seconds=1.0)
@@ -1484,6 +1719,13 @@ class XiaohongshuPublisher:
             feeds = explorer.search_feeds(keyword=keyword, filters=filters)
         except FeedExplorerError as e:
             raise CDPError(str(e)) from e
+
+        if len(feeds) < min_count and min_count > 20:
+            feeds = self._scroll_search_page_for_more(
+                explorer,
+                current_count=len(feeds),
+                target_count=min_count,
+            )
 
         print(
             f"[cdp_publish] Search completed. keyword={keyword}, "

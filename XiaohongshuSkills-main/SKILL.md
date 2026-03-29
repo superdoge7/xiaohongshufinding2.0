@@ -3,7 +3,7 @@ name: redbook_skills
 description: |
   将图文/视频内容自动发布到小红书（XHS），并支持登录检查、内容检索与互动操作、AI 内容分析与报告生成。
   适用场景：发布图文、发布视频、仅启动测试浏览器、获取登录二维码、首页推荐抓取、搜索笔记、评论互动、抓取内容数据、AI 打分分析、生成内容报告。
-  支持桌面应用模式（Electron + React）和 CLI/Skill 模式。
+  支持桌面应用模式（Electron + React）和 CLI/Skill 模式；桌面端通过 `serve_local_app.py` 提供 JSON API（含首页 feed、搜索、笔记详情含可选评论滚动、AI 分析与报告、`config/ai_settings.json` 中屏蔽词过滤）。
 metadata:
   trigger: 发布内容到小红书
   source: Angiin/Post-to-xhs
@@ -23,10 +23,11 @@ metadata:
 1. 用户明确要求"测试浏览器 / 启动浏览器 / 检查登录 / 获取登录二维码 / 只打开不发布"：进入测试浏览器流程。
 2. 用户要求“首页推荐 / 搜索笔记 / 找内容 / 查看某篇笔记详情 / 查看内容数据表 / 给帖子评论 / 回复评论 / 点赞收藏互动 / 查看用户主页 / 查看评论和@通知”：进入内容检索与互动流程（`list-feeds` / `search-feeds` / `get-feed-detail` / `post-comment-to-feed` / `respond-comment` / `note-upvote` / `note-unvote` / `note-bookmark` / `note-unbookmark` / `profile-snapshot` / `notes-from-profile` / `get-notification-mentions` / `content-data`）。
 3. 用户要求「检索后由外部模型打分 / 汇总编排 / 外部生图（1–4 张 URL）/ 只保存创作者草稿、人工发布」：使用 `scripts/ai_content_pipeline.py`（子命令 `fetch-search`、`merge-scores`、`score-api`、`image-api`、`save-draft` 或 `run`），外部 API 在 `config/external_ai.json` 由用户配置；流程约定见 `docs/ai-workflow.md`。可选本地页：`pip install -r requirements-app.txt` 后 `python scripts/serve_local_app.py`。
-4. 用户已提供 `标题 + 正文 + 视频(本地路径或 URL)`：直接进入视频发布流程。
-5. 用户已提供 `标题 + 正文 + 图片(本地路径或 URL)`：直接进入图文发布流程。
-6. 用户只提供网页 URL：先提取网页内容与图片/视频，再给出可发布草稿，等待用户确认。
-7. 信息不全：先补齐缺失信息，不要直接发布。
+4. 用户明确使用 **RedBook Desktop / 本地 App / Electron 界面**：以 `serve_local_app.py` 的 HTTP API 为准（`/api/search`、`/api/feeds/home`、`/api/feeds/detail` 支持 `load_all_comments` 等参数、`/api/ai/*`）；AI 相关配置与 **屏蔽词** `block_words` 在 `config/ai_settings.json`（参见 `config/ai_settings.json.example`），详见 `README.md`。
+5. 用户已提供 `标题 + 正文 + 视频(本地路径或 URL)`：直接进入视频发布流程。
+6. 用户已提供 `标题 + 正文 + 图片(本地路径或 URL)`：直接进入图文发布流程。
+7. 用户只提供网页 URL：先提取网页内容与图片/视频，再给出可发布草稿，等待用户确认。
+8. 信息不全：先补齐缺失信息，不要直接发布。
 
 ## 必做约束
 

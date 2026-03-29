@@ -18,35 +18,58 @@ async function request<T = unknown>(
 ): Promise<T> {
   const base = await getApiBase();
   const url = `${base}${path}`;
-  const res = await fetch(url, {
-    headers: { "Content-Type": "application/json", ...options.headers },
-    ...options,
-  });
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      headers: { "Content-Type": "application/json", ...options.headers },
+      ...options,
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (
+      msg.includes("Failed to fetch") ||
+      msg.includes("NetworkError") ||
+      msg.includes("network")
+    ) {
+      throw new Error(
+        "无法连接后端（Failed to fetch）。请确认已在本机运行：python scripts/serve_local_app.py，且防火墙未拦截 8765 端口。"
+      );
+    }
+    throw e;
+  }
   if (!res.ok) {
     const text = await res.text();
-    let detail = text;
+    let detail: string | unknown = text;
     try {
-      const parsed = JSON.parse(text);
-      detail = parsed.detail || text;
-    } catch {}
+      const parsed = JSON.parse(text) as { detail?: unknown };
+      if (parsed.detail !== undefined) detail = parsed.detail;
+    } catch {
+      /* keep text */
+    }
     throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
   }
-  return res.json();
+  return res.json() as Promise<T>;
 }
 
 export const api = {
-  // Chrome
-  chromeStart: (headless = false) =>
-    request<{ ok: boolean }>("/api/chrome/start", {
+  // Chrome / Edge browser
+  chromeStart: (headless = false, browser = "auto") =>
+    request<{ ok: boolean; browser?: string }>("/api/chrome/start", {
       method: "POST",
-      body: JSON.stringify({ headless }),
+      body: JSON.stringify({ headless, browser }),
     }),
   chromeStop: () =>
     request<{ ok: boolean }>("/api/chrome/stop", { method: "POST" }),
   chromeStatus: () =>
-    request<{ running: boolean }>("/api/chrome/status", { method: "POST" }),
+    request<{ running: boolean; browser?: string | null }>("/api/chrome/status", {
+      method: "POST",
+    }),
+  chromeBrowsers: () =>
+    request<{
+      browsers: Array<{ name: string; label: string; path: string }>;
+    }>("/api/chrome/browsers"),
 
-  // Login
+  // Login - QR code
   loginQrcode: () =>
     request<{
       qrcode_base64?: string;
@@ -54,8 +77,31 @@ export const api = {
       status?: string;
     }>("/api/login/qrcode", { method: "POST" }),
   loginCheck: () =>
-    request<{ logged_in: boolean; cached?: boolean }>("/api/login/check", {
+    request<{ logged_in: boolean; cached?: boolean; error?: string }>("/api/login/check", {
       method: "POST",
+    }),
+
+  // Login - phone SMS
+  loginPhoneStart: (phone: string, countryCode = "86") =>
+    request<{
+      ok: boolean;
+      code_sent?: boolean;
+      already_logged_in?: boolean;
+      message?: string;
+      reason?: string;
+    }>("/api/login/phone/start", {
+      method: "POST",
+      body: JSON.stringify({ phone, country_code: countryCode }),
+    }),
+  loginPhoneVerify: (phone: string, code: string, countryCode = "86") =>
+    request<{
+      ok: boolean;
+      logged_in?: boolean;
+      current_url?: string;
+      reason?: string;
+    }>("/api/login/phone/verify", {
+      method: "POST",
+      body: JSON.stringify({ phone, code, country_code: countryCode }),
     }),
 
   // Accounts
@@ -87,7 +133,8 @@ export const api = {
   searchFeeds: (
     keyword: string,
     sortBy?: string,
-    noteType?: string
+    noteType?: string,
+    minCount?: number,
   ) =>
     request<{
       keyword: string;
@@ -99,16 +146,41 @@ export const api = {
         keyword,
         sort_by: sortBy,
         note_type: noteType,
+        min_count: minCount ?? 20,
       }),
     }),
   homeFeeds: () =>
     request<{ feeds: Array<Record<string, unknown>> }>("/api/feeds/home", {
       method: "POST",
     }),
-  feedDetail: (feedId: string, xsecToken: string) =>
+  feedDetail: (
+    feedId: string,
+    xsecToken: string,
+    opts?: {
+      load_all_comments?: boolean;
+      limit?: number;
+      click_more_replies?: boolean;
+      reply_limit?: number;
+      scroll_speed?: string;
+    }
+  ) =>
     request<Record<string, unknown>>("/api/feeds/detail", {
       method: "POST",
-      body: JSON.stringify({ feed_id: feedId, xsec_token: xsecToken }),
+      body: JSON.stringify({
+        feed_id: feedId,
+        xsec_token: xsecToken,
+        load_all_comments: opts?.load_all_comments ?? false,
+        limit: opts?.limit ?? 20,
+        click_more_replies: opts?.click_more_replies ?? false,
+        reply_limit: opts?.reply_limit ?? 10,
+        scroll_speed: opts?.scroll_speed ?? "normal",
+      }),
+    }),
+
+  browserNavigate: (body: { url: string }) =>
+    request<{ ok: boolean }>("/api/browser/navigate", {
+      method: "POST",
+      body: JSON.stringify(body),
     }),
 
   // AI
@@ -116,10 +188,13 @@ export const api = {
     feeds: Array<Record<string, unknown>>;
     preset: string;
     keyword?: string;
+    max_feeds?: number;
   }) =>
     request<{
       results: Array<Record<string, unknown>>;
       summary?: string;
+      filtered_by_block_words?: number;
+      feeds_analyzed?: number;
     }>("/api/ai/analyze", {
       method: "POST",
       body: JSON.stringify(body),
@@ -127,6 +202,7 @@ export const api = {
   aiScoreBatch: (body: {
     feeds: Array<Record<string, unknown>>;
     preset: string;
+    max_feeds?: number;
   }) =>
     request<{
       scored_feeds: Array<Record<string, unknown>>;
@@ -138,6 +214,8 @@ export const api = {
     feeds: Array<Record<string, unknown>>;
     keyword: string;
     preset?: string;
+    max_feeds?: number;
+    with_illustrations?: boolean;
   }) =>
     request<{
       report: {
@@ -146,6 +224,13 @@ export const api = {
         top_feeds: Array<Record<string, unknown>>;
         analysis: string;
         recommendations: string[];
+        filtered_by_block_words?: number;
+        report_visuals?: {
+          primary_image_url?: string;
+          more_image_urls?: string[];
+          caption?: string;
+          image_prompt_hint?: string;
+        } | null;
       };
     }>("/api/ai/generate-report", {
       method: "POST",
@@ -158,12 +243,18 @@ export const api = {
         api_key_set: boolean;
         model: string;
         base_url: string;
+        max_tokens: number;
+        block_words: string[];
+        use_note_covers?: boolean;
       }>("/api/ai/settings"),
     save: (body: {
       provider: string;
       api_key: string;
       model: string;
       base_url?: string;
+      max_tokens?: number;
+      block_words?: string[];
+      use_note_covers?: boolean;
     }) =>
       request<{ ok: boolean }>("/api/ai/settings", {
         method: "POST",
